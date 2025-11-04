@@ -135,7 +135,56 @@ The tool exposes minimal parameters to the LLM to keep the interface clean and f
 
 ### Server Configuration
 
-Most configuration is done at the server level, not per-request. Configure via **CLI arguments** or **environment variables** in your MCP client config:
+Most configuration is done at the server level, not per-request. Deep-fetch uses a clean separation:
+
+- **CLI Arguments**: User-facing settings (image quality, dimensions, text length, etc.)
+- **Environment Variables**: Low-level infrastructure settings (timeouts, byte limits, security guards)
+
+This prevents duplication and makes configs clearer.
+
+#### Complete Example Configuration
+
+```json
+{
+  "mcpServers": {
+    "deep-fetch": {
+      "disabled": false,
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "github:ain3sh/fetch-tool",
+
+        // Image Processing (CLI args)
+        "--image-output", "both",              // Save to disk AND return base64
+        "--image-layout", "merged",            // Vertically merge multiple images
+        "--image-max-count", "15",             // Fetch up to 15 images per page
+        "--image-quality", "80",               // JPEG quality (1-100)
+        "--image-max-width", "2500",           // Max width in pixels
+        "--image-max-height", "2500",          // Max height in pixels
+        "--image-origin-policy", "cross-origin", // Include CDN images
+        "--image-start-index", "0",            // Start from first image
+
+        // Text Processing (CLI args)
+        "--text-max-length", "25000",          // Max characters per fetch
+        "--text-start-index", "0",             // Start from beginning
+
+        // Security (CLI arg)
+        "--ignore-robots-txt"                  // Bypass robots.txt (use responsibly!)
+      ],
+      "env": {
+        // Security & Infrastructure (env vars only)
+        "DEEP_FETCH_DEFAULT_SAVE_DIR": "/tmp/deep-fetch",    // Where to save images
+        "DEEP_FETCH_TIMEOUT_MS": "15000",                     // 15 second timeout
+        "DEEP_FETCH_MAX_REDIRECTS": "5",                      // Allow 5 redirect hops
+        "DEEP_FETCH_MAX_HTML_BYTES": "5000000",               // 5MB max HTML size
+        "DEEP_FETCH_MAX_IMAGE_BYTES": "10000000",             // 10MB max image size
+        "DEEP_FETCH_DISABLE_SSRF_GUARD": "0"                  // Keep SSRF protection ON
+      }
+    }
+  }
+}
+```
 
 #### CLI Arguments
 
@@ -169,6 +218,7 @@ Most configuration is done at the server level, not per-request. Configure via *
 - `--image-origin-policy <cross-origin|same-origin>` (default: cross-origin)
 - `--image-start-index <number>` (default: 0)
 - `--image-max-count <0-10>` (default: 3)
+- `--default-save-dir <path>` (default: ~/Downloads/deep-fetch)
 
 **Text Processing:**
 - `--text-start-index <number>` (default: 0)
@@ -177,56 +227,45 @@ Most configuration is done at the server level, not per-request. Configure via *
 **Security:**
 - `--ignore-robots-txt` (default: respect robots.txt)
 
-#### Environment Variables
+#### Environment Variables (Security & Infrastructure Only)
 
+Environment variables are reserved for low-level settings that rarely change. Use CLI args for image/text processing.
+
+**Available:**
+- `DEEP_FETCH_DEFAULT_SAVE_DIR` (string, default: ~/Downloads/deep-fetch) - Base directory for saved images
+- `DEEP_FETCH_TIMEOUT_MS` (number, default: 12000) - HTTP request timeout in milliseconds
+- `DEEP_FETCH_MAX_REDIRECTS` (number, default: 3) - Maximum HTTP redirect hops
+- `DEEP_FETCH_MAX_HTML_BYTES` (number, default: 2000000) - Maximum HTML response size (2MB)
+- `DEEP_FETCH_MAX_IMAGE_BYTES` (number, default: 10000000) - Maximum image response size (10MB)
+- `DEEP_FETCH_DISABLE_SSRF_GUARD` (0 or 1, default: 0) - Disable SSRF protection (⚠️ dangerous, keep enabled!)
+
+**Example with env vars:**
 ```json
 {
   "mcpServers": {
-    "fetch": {
+    "deep-fetch": {
       "command": "npx",
-      "args": ["-y", "github:ain3sh/fetch-tool"],
+      "args": [
+        "-y", "github:ain3sh/fetch-tool",
+        "--image-output", "both",
+        "--image-quality", "85"
+      ],
       "env": {
-        "MCP_FETCH_IMAGE_OUTPUT": "both",
-        "MCP_FETCH_IMAGE_LAYOUT": "merged",
-        "MCP_FETCH_IMAGE_MAX_COUNT": "5",
-        "MCP_FETCH_IMAGE_QUALITY": "85",
-        "MCP_FETCH_TEXT_MAX_LENGTH": "50000"
+        "DEEP_FETCH_DEFAULT_SAVE_DIR": "/tmp/deep-fetch",
+        "DEEP_FETCH_TIMEOUT_MS": "15000",
+        "DEEP_FETCH_MAX_HTML_BYTES": "5000000"
       }
     }
   }
 }
 ```
 
-**Available Environment Variables:**
-
-**Image Processing:**
-- `MCP_FETCH_IMAGE_MAX_WIDTH` (pixels)
-- `MCP_FETCH_IMAGE_MAX_HEIGHT` (pixels)
-- `MCP_FETCH_IMAGE_QUALITY` (1-100)
-- `MCP_FETCH_IMAGE_OUTPUT` (base64|file|both)
-- `MCP_FETCH_IMAGE_LAYOUT` (merged|individual|both)
-- `MCP_FETCH_IMAGE_ORIGIN_POLICY` (cross-origin|same-origin)
-- `MCP_FETCH_IMAGE_START_INDEX` (number)
-- `MCP_FETCH_IMAGE_MAX_COUNT` (0-10)
-
-**Text Processing:**
-- `MCP_FETCH_TEXT_START_INDEX` (number)
-- `MCP_FETCH_TEXT_MAX_LENGTH` (characters)
-
-**Security:**
-- `MCP_FETCH_IGNORE_ROBOTS_TXT` (1 to ignore, unset to respect)
-- `MCP_FETCH_TIMEOUT_MS` (milliseconds, default: 12000)
-- `MCP_FETCH_MAX_REDIRECTS` (number, default: 3)
-- `MCP_FETCH_MAX_HTML_BYTES` (bytes, default: 2000000)
-- `MCP_FETCH_MAX_IMAGE_BYTES` (bytes, default: 10000000)
-- `MCP_FETCH_DISABLE_SSRF_GUARD` (1 to disable, unset to enable)
-
-#### Priority Order
+#### Configuration Priority
 
 Configuration is applied in this order (highest to lowest priority):
-1. Per-request parameter (for the limited LLM-controlled params only)
-2. CLI argument
-3. Environment variable
+1. Per-request parameter (for the limited LLM-controlled params: `url`, `images.saveDir`, `images.maxCount`, `text.maxLength`)
+2. CLI argument (image/text processing settings)
+3. Environment variable (security/infrastructure settings only)
 4. Built-in default
 
 ### Common Configuration Scenarios
