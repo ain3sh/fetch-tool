@@ -1,8 +1,8 @@
 {
-  "name": "@ain3sh/mcp-fetch",
+  "name": "@ain3sh/deep-fetch",
   "version": "2.0.0",
   "type": "module",
-  "description": "LLM-friendly fork of kazuph/mcp-fetch - Model Context Protocol server with server-level configuration for cleaner LLM interaction",
+  "description": "Deep-fetch: MCP server for web content fetching with clean markdown extraction, image processing, and organized file management. Configured once at server-level for LLM-friendly simplicity.",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
@@ -51,6 +51,7 @@
   },
   "keywords": [
     "mcp",
+    "deep-fetch",
     "fetch",
     "web",
     "content",
@@ -59,13 +60,15 @@
     "claude",
     "ai",
     "llm-friendly",
-    "server-config"
+    "server-config",
+    "readability",
+    "markdown"
   ],
   "bugs": {
     "url": "https://github.com/ain3sh/fetch-tool/issues"
   },
   "homepage": "https://github.com/ain3sh/fetch-tool#readme",
   "bin": {
-    "mcp-fetch": "dist/index.js"
+    "deep-fetch": "dist/index.js"
   }
 }

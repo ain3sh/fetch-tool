@@ -50,15 +50,15 @@ let serverConnected = false;
 // Security hardening
 // --------------------
 // Defaults (can be overridden by env vars)
-const FETCH_TIMEOUT_MS = Number(process.env.MCP_FETCH_TIMEOUT_MS || 12000);
-const MAX_REDIRECTS = Number(process.env.MCP_FETCH_MAX_REDIRECTS || 3);
+const FETCH_TIMEOUT_MS = Number(process.env.DEEP_FETCH_TIMEOUT_MS || 12000);
+const MAX_REDIRECTS = Number(process.env.DEEP_FETCH_MAX_REDIRECTS || 3);
 const MAX_HTML_BYTES = Number(
-  process.env.MCP_FETCH_MAX_HTML_BYTES || 2_000_000
+  process.env.DEEP_FETCH_MAX_HTML_BYTES || 2_000_000
 ); // 2MB
 const MAX_IMAGE_BYTES = Number(
-  process.env.MCP_FETCH_MAX_IMAGE_BYTES || 10_000_000
+  process.env.DEEP_FETCH_MAX_IMAGE_BYTES || 10_000_000
 ); // 10MB
-const DISABLE_SSRF_GUARD = process.env.MCP_FETCH_DISABLE_SSRF_GUARD === "1";
+const DISABLE_SSRF_GUARD = process.env.DEEP_FETCH_DISABLE_SSRF_GUARD === "1";
 
 // --------------------
 // Server-level configuration
@@ -73,6 +73,7 @@ interface ServerConfig {
   imageOriginPolicy: "cross-origin" | "same-origin";
   imageStartIndex: number;
   imageMaxCount: number; // Server default, can be overridden per-request
+  imageSaveDir: string; // Default directory for saving images
   // Text processing
   textStartIndex: number;
   textMaxLength: number; // Server default, can be overridden per-request
@@ -139,6 +140,10 @@ function parseCliArgs(args: string[]): Partial<ServerConfig> {
       case "--ignore-robots-txt":
         config.ignoreRobotsTxt = true;
         break;
+      case "--default-save-dir":
+        if (next) config.imageSaveDir = next;
+        i++;
+        break;
     }
   }
   return config;
@@ -149,6 +154,9 @@ function parseCliArgs(args: string[]): Partial<ServerConfig> {
  */
 function loadServerConfig(args: string[]): ServerConfig {
   // Hard-coded defaults
+  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
+  const defaultSaveDir = path.join(homeDir, "Downloads", "deep-fetch");
+
   const defaults: ServerConfig = {
     imageMaxWidth: 1000,
     imageMaxHeight: 4000,
@@ -158,49 +166,16 @@ function loadServerConfig(args: string[]): ServerConfig {
     imageOriginPolicy: "cross-origin",
     imageStartIndex: 0,
     imageMaxCount: 3,
+    imageSaveDir: defaultSaveDir,
     textStartIndex: 0,
     textMaxLength: 20000,
     ignoreRobotsTxt: false,
   };
 
-  // Env var overrides
+  // Env var overrides (only low-level security/network settings)
+  // Image/text processing settings use CLI args only
   const envConfig: Partial<ServerConfig> = {
-    imageMaxWidth: process.env.MCP_FETCH_IMAGE_MAX_WIDTH
-      ? Number(process.env.MCP_FETCH_IMAGE_MAX_WIDTH)
-      : undefined,
-    imageMaxHeight: process.env.MCP_FETCH_IMAGE_MAX_HEIGHT
-      ? Number(process.env.MCP_FETCH_IMAGE_MAX_HEIGHT)
-      : undefined,
-    imageQuality: process.env.MCP_FETCH_IMAGE_QUALITY
-      ? Number(process.env.MCP_FETCH_IMAGE_QUALITY)
-      : undefined,
-    imageOutput: process.env.MCP_FETCH_IMAGE_OUTPUT as
-      | "base64"
-      | "file"
-      | "both"
-      | undefined,
-    imageLayout: process.env.MCP_FETCH_IMAGE_LAYOUT as
-      | "merged"
-      | "individual"
-      | "both"
-      | undefined,
-    imageOriginPolicy: process.env.MCP_FETCH_IMAGE_ORIGIN_POLICY as
-      | "cross-origin"
-      | "same-origin"
-      | undefined,
-    imageStartIndex: process.env.MCP_FETCH_IMAGE_START_INDEX
-      ? Number(process.env.MCP_FETCH_IMAGE_START_INDEX)
-      : undefined,
-    imageMaxCount: process.env.MCP_FETCH_IMAGE_MAX_COUNT
-      ? Number(process.env.MCP_FETCH_IMAGE_MAX_COUNT)
-      : undefined,
-    textStartIndex: process.env.MCP_FETCH_TEXT_START_INDEX
-      ? Number(process.env.MCP_FETCH_TEXT_START_INDEX)
-      : undefined,
-    textMaxLength: process.env.MCP_FETCH_TEXT_MAX_LENGTH
-      ? Number(process.env.MCP_FETCH_TEXT_MAX_LENGTH)
-      : undefined,
-    ignoreRobotsTxt: process.env.MCP_FETCH_IGNORE_ROBOTS_TXT === "1",
+    imageSaveDir: process.env.DEEP_FETCH_DEFAULT_SAVE_DIR || undefined,
   };
 
   // CLI arg overrides
@@ -804,21 +779,17 @@ async function mergeImagesVertically(
 async function saveImageToFile(
   imageBuffer: Buffer,
   sourceUrl: string,
-  imageIndex: number = 0
+  imageIndex: number = 0,
+  saveDirOverride?: string
 ): Promise<string> {
   // 現在の日付をYYYY-MM-DD形式で取得
   const now = new Date();
   const dateStr = now.toISOString().split("T")[0];
 
-  // 保存先ディレクトリ: ~/Downloads/mcp-fetch/YYYY-MM-DD/merged/
-  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
-  const baseDir = path.join(
-    homeDir,
-    "Downloads",
-    "mcp-fetch",
-    dateStr,
-    "merged"
-  );
+  // 保存先ディレクトリ: カスタムディレクトリまたはデフォルト
+  const baseDir = saveDirOverride
+    ? path.join(saveDirOverride, dateStr, "merged")
+    : path.join(SERVER_CONFIG.imageSaveDir, dateStr, "merged");
 
   // ディレクトリが存在しない場合は作成
   await fs.mkdir(baseDir, { recursive: true });
@@ -867,21 +838,17 @@ async function saveIndividualImageAndRegisterResource(
   sourceUrl: string,
   imageIndex: number,
   altText: string = "",
-  originalFilename: string = "image.jpg"
+  originalFilename: string = "image.jpg",
+  saveDirOverride?: string
 ): Promise<string> {
   // 現在の日付をYYYY-MM-DD形式で取得
   const now = new Date();
   const dateStr = now.toISOString().split("T")[0];
 
-  // 保存先ディレクトリ: ~/Downloads/mcp-fetch/YYYY-MM-DD/individual/
-  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
-  const baseDir = path.join(
-    homeDir,
-    "Downloads",
-    "mcp-fetch",
-    dateStr,
-    "individual"
-  );
+  // 保存先ディレクトリ: カスタムディレクトリまたはデフォルト
+  const baseDir = saveDirOverride
+    ? path.join(saveDirOverride, dateStr, "individual")
+    : path.join(SERVER_CONFIG.imageSaveDir, dateStr, "individual");
 
   // ディレクトリが存在しない場合は作成
   await fs.mkdir(baseDir, { recursive: true });
@@ -983,6 +950,7 @@ async function fetchUrl(
     allowCrossOriginImages: true,
     saveImages: true,
     returnBase64: false,
+    saveDir: undefined as string | undefined,
   }
 ): Promise<FetchResult> {
   const { response, finalUrl } = await safeFollowFetch(url, {
@@ -1054,7 +1022,8 @@ async function fetchUrl(
                   finalUrl,
                   startIdx + i,
                   img.alt,
-                  img.filename || "image.jpg"
+                  img.filename || "image.jpg",
+                  options.saveDir
                 );
               } catch (error) {
                 console.warn(`Failed to save individual image ${i}:`, error);
@@ -1096,7 +1065,8 @@ async function fetchUrl(
               filePath = await saveImageToFile(
                 optimizedImage,
                 finalUrl,
-                options.imageStartIndex
+                options.imageStartIndex,
+                options.saveDir
               );
               if (serverConnected) {
                 console.error(`Image saved to: ${filePath}`);
@@ -1151,7 +1121,7 @@ const SERVER_CONFIG = loadServerConfig(args);
 // Server setup
 const server = new Server(
   {
-    name: "mcp-fetch",
+    name: "deep-fetch",
     version: "2.0.0",
   },
   {
@@ -1186,8 +1156,8 @@ server.setRequestHandler(
   async (_request: { method: "tools/list" }, _extra: RequestHandlerExtra) => {
     const tools = [
       {
-        name: "imageFetch",
-        description: `Fetches web content and converts to clean markdown. Optionally processes images from the page.
+        name: "fetch",
+        description: `Deep-fetch: Fetches web content and converts to clean markdown using Mozilla Readability + Turndown. Optionally processes, optimizes, and saves images from the page.
 
 **IMPORTANT PARAMETER USAGE GUIDELINES:**
 
@@ -1288,6 +1258,7 @@ server.setRequestHandler(
         saveImages: false,
         returnBase64: false,
         raw: false,
+        saveDir: undefined as string | undefined,
       };
 
       // Apply per-request overrides for images
@@ -1306,8 +1277,9 @@ server.setRequestHandler(
           if (images.maxCount !== undefined) {
             fetchOptions.imageMaxCount = images.maxCount;
           }
-          // Note: images.saveDir would be used in saveImageToFile
-          // TODO: Pass saveDir through to file saving functions
+          if (images.saveDir !== undefined) {
+            fetchOptions.saveDir = images.saveDir;
+          }
         }
       }
 
