@@ -60,6 +60,164 @@ const MAX_IMAGE_BYTES = Number(
 ); // 10MB
 const DISABLE_SSRF_GUARD = process.env.MCP_FETCH_DISABLE_SSRF_GUARD === "1";
 
+// --------------------
+// Server-level configuration
+// --------------------
+interface ServerConfig {
+  // Image processing
+  imageMaxWidth: number;
+  imageMaxHeight: number;
+  imageQuality: number;
+  imageOutput: "base64" | "file" | "both";
+  imageLayout: "merged" | "individual" | "both";
+  imageOriginPolicy: "cross-origin" | "same-origin";
+  imageStartIndex: number;
+  imageMaxCount: number; // Server default, can be overridden per-request
+  // Text processing
+  textStartIndex: number;
+  textMaxLength: number; // Server default, can be overridden per-request
+  // Security
+  ignoreRobotsTxt: boolean;
+}
+
+/**
+ * Parse CLI arguments into a config object
+ */
+function parseCliArgs(args: string[]): Partial<ServerConfig> {
+  const config: Partial<ServerConfig> = {};
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    const next = args[i + 1];
+
+    switch (arg) {
+      case "--image-max-width":
+        if (next) config.imageMaxWidth = Number(next);
+        i++;
+        break;
+      case "--image-max-height":
+        if (next) config.imageMaxHeight = Number(next);
+        i++;
+        break;
+      case "--image-quality":
+        if (next) config.imageQuality = Number(next);
+        i++;
+        break;
+      case "--image-output":
+        if (next && ["base64", "file", "both"].includes(next)) {
+          config.imageOutput = next as "base64" | "file" | "both";
+        }
+        i++;
+        break;
+      case "--image-layout":
+        if (next && ["merged", "individual", "both"].includes(next)) {
+          config.imageLayout = next as "merged" | "individual" | "both";
+        }
+        i++;
+        break;
+      case "--image-origin-policy":
+        if (next && ["cross-origin", "same-origin"].includes(next)) {
+          config.imageOriginPolicy = next as "cross-origin" | "same-origin";
+        }
+        i++;
+        break;
+      case "--image-start-index":
+        if (next) config.imageStartIndex = Number(next);
+        i++;
+        break;
+      case "--image-max-count":
+        if (next) config.imageMaxCount = Number(next);
+        i++;
+        break;
+      case "--text-start-index":
+        if (next) config.textStartIndex = Number(next);
+        i++;
+        break;
+      case "--text-max-length":
+        if (next) config.textMaxLength = Number(next);
+        i++;
+        break;
+      case "--ignore-robots-txt":
+        config.ignoreRobotsTxt = true;
+        break;
+    }
+  }
+  return config;
+}
+
+/**
+ * Read server configuration from env vars and CLI args
+ */
+function loadServerConfig(args: string[]): ServerConfig {
+  // Hard-coded defaults
+  const defaults: ServerConfig = {
+    imageMaxWidth: 1000,
+    imageMaxHeight: 4000,
+    imageQuality: 80,
+    imageOutput: "base64",
+    imageLayout: "merged",
+    imageOriginPolicy: "cross-origin",
+    imageStartIndex: 0,
+    imageMaxCount: 3,
+    textStartIndex: 0,
+    textMaxLength: 20000,
+    ignoreRobotsTxt: false,
+  };
+
+  // Env var overrides
+  const envConfig: Partial<ServerConfig> = {
+    imageMaxWidth: process.env.MCP_FETCH_IMAGE_MAX_WIDTH
+      ? Number(process.env.MCP_FETCH_IMAGE_MAX_WIDTH)
+      : undefined,
+    imageMaxHeight: process.env.MCP_FETCH_IMAGE_MAX_HEIGHT
+      ? Number(process.env.MCP_FETCH_IMAGE_MAX_HEIGHT)
+      : undefined,
+    imageQuality: process.env.MCP_FETCH_IMAGE_QUALITY
+      ? Number(process.env.MCP_FETCH_IMAGE_QUALITY)
+      : undefined,
+    imageOutput: process.env.MCP_FETCH_IMAGE_OUTPUT as
+      | "base64"
+      | "file"
+      | "both"
+      | undefined,
+    imageLayout: process.env.MCP_FETCH_IMAGE_LAYOUT as
+      | "merged"
+      | "individual"
+      | "both"
+      | undefined,
+    imageOriginPolicy: process.env.MCP_FETCH_IMAGE_ORIGIN_POLICY as
+      | "cross-origin"
+      | "same-origin"
+      | undefined,
+    imageStartIndex: process.env.MCP_FETCH_IMAGE_START_INDEX
+      ? Number(process.env.MCP_FETCH_IMAGE_START_INDEX)
+      : undefined,
+    imageMaxCount: process.env.MCP_FETCH_IMAGE_MAX_COUNT
+      ? Number(process.env.MCP_FETCH_IMAGE_MAX_COUNT)
+      : undefined,
+    textStartIndex: process.env.MCP_FETCH_TEXT_START_INDEX
+      ? Number(process.env.MCP_FETCH_TEXT_START_INDEX)
+      : undefined,
+    textMaxLength: process.env.MCP_FETCH_TEXT_MAX_LENGTH
+      ? Number(process.env.MCP_FETCH_TEXT_MAX_LENGTH)
+      : undefined,
+    ignoreRobotsTxt: process.env.MCP_FETCH_IGNORE_ROBOTS_TXT === "1",
+  };
+
+  // CLI arg overrides
+  const cliConfig = parseCliArgs(args);
+
+  // Merge: defaults < env < cli
+  return {
+    ...defaults,
+    ...(Object.fromEntries(
+      Object.entries(envConfig).filter(([_, v]) => v !== undefined)
+    ) as Partial<ServerConfig>),
+    ...(Object.fromEntries(
+      Object.entries(cliConfig).filter(([_, v]) => v !== undefined)
+    ) as Partial<ServerConfig>),
+  };
+}
+
 function isPrivateIPv4(ip: string): boolean {
   const parts = ip.split(".").map((v) => Number(v));
   if (
@@ -441,42 +599,7 @@ function extractFilenameFromUrl(url: string): string {
   }
 }
 
-// New structured API (optional)
-const NewImagesSchema = z
-  .union([
-    z.boolean(),
-    z.object({
-      output: z.enum(["base64", "file", "both"]).optional(),
-      layout: z.enum(["merged", "individual", "both"]).optional(),
-      maxCount: z.number().int().min(0).max(10).optional(),
-      startIndex: z.number().int().min(0).optional(),
-      size: z
-        .object({
-          maxWidth: z.number().int().min(100).max(10000).optional(),
-          maxHeight: z.number().int().min(100).max(10000).optional(),
-          quality: z.number().int().min(1).max(100).optional(),
-        })
-        .optional(),
-      originPolicy: z.enum(["cross-origin", "same-origin"]).optional(),
-      saveDir: z.string().optional(),
-    }),
-  ])
-  .optional();
-
-const NewTextSchema = z
-  .object({
-    maxLength: z.number().int().positive().max(1000000).optional(),
-    startIndex: z.number().int().min(0).optional(),
-    raw: z.boolean().optional(),
-  })
-  .optional();
-
-const NewSecuritySchema = z
-  .object({
-    ignoreRobotsTxt: z.boolean().optional(),
-  })
-  .optional();
-
+// Simplified schema - only LLM-controllable parameters
 const FetchArgsSchema = z.object({
   url: z
     .string()
@@ -492,82 +615,21 @@ const FetchArgsSchema = z.object({
       },
       { message: "Only http/https URLs are allowed" }
     ),
-  // legacy flat params (kept for backward compatibility)
-  maxLength: z
-    .union([z.number(), z.string()])
-    .transform((val) => Number(val))
-    .pipe(z.number().positive().max(1000000))
-    .default(20000),
-  startIndex: z
-    .union([z.number(), z.string()])
-    .transform((val) => Number(val))
-    .pipe(z.number().min(0))
-    .default(0),
-  imageStartIndex: z
-    .union([z.number(), z.string()])
-    .transform((val) => Number(val))
-    .pipe(z.number().min(0))
-    .default(0),
-  raw: z
-    .union([z.boolean(), z.string()])
-    .transform((val) =>
-      typeof val === "string" ? val.toLowerCase() === "true" : val
-    )
-    .default(false),
-  imageMaxCount: z
-    .union([z.number(), z.string()])
-    .transform((val) => Number(val))
-    .pipe(z.number().min(0).max(10))
-    .default(3),
-  imageMaxHeight: z
-    .union([z.number(), z.string()])
-    .transform((val) => Number(val))
-    .pipe(z.number().min(100).max(10000))
-    .default(4000),
-  imageMaxWidth: z
-    .union([z.number(), z.string()])
-    .transform((val) => Number(val))
-    .pipe(z.number().min(100).max(10000))
-    .default(1000),
-  imageQuality: z
-    .union([z.number(), z.string()])
-    .transform((val) => Number(val))
-    .pipe(z.number().min(1).max(100))
-    .default(80),
-  enableFetchImages: z
-    .union([z.boolean(), z.string()])
-    .transform((val) =>
-      typeof val === "string" ? val.toLowerCase() === "true" : val
-    )
-    .default(false),
-  allowCrossOriginImages: z
-    .union([z.boolean(), z.string()])
-    .transform((val) =>
-      typeof val === "string" ? val.toLowerCase() === "true" : val
-    )
-    .default(true),
-  ignoreRobotsTxt: z
-    .union([z.boolean(), z.string()])
-    .transform((val) =>
-      typeof val === "string" ? val.toLowerCase() === "true" : val
-    )
-    .default(false),
-  saveImages: z
-    .union([z.boolean(), z.string()])
-    .transform((val) =>
-      typeof val === "string" ? val.toLowerCase() === "true" : val
-    )
-    .default(true),
-  returnBase64: z
-    .union([z.boolean(), z.string()])
-    .transform((val) =>
-      typeof val === "string" ? val.toLowerCase() === "true" : val
-    )
-    .default(false),
-  // new structured params (optional)
-  images: NewImagesSchema,
-  text: NewTextSchema,
-  security: NewSecuritySchema,
+  images: z
+    .union([
+      z.boolean(),
+      z.object({
+        maxCount: z.number().int().min(0).max(10).optional(),
+        saveDir: z.string().optional(),
+      }),
+    ])
+    .optional(),
+  text: z
+    .object({
+      raw: z.boolean().optional(),
+      maxLength: z.number().int().positive().max(1000000).optional(),
+    })
+    .optional(),
 });
 
 const ListToolsSchema = z.object({
@@ -1082,15 +1144,15 @@ async function fetchUrl(
   };
 }
 
-// コマンドライン引数の解析
+// コマンドライン引数の解析とサーバー設定の読み込み
 const args = process.argv.slice(2);
-const IGNORE_ROBOTS_TXT = args.includes("--ignore-robots-txt");
+const SERVER_CONFIG = loadServerConfig(args);
 
 // Server setup
 const server = new Server(
   {
     name: "mcp-fetch",
-    version: "1.6.2",
+    version: "2.0.0",
   },
   {
     capabilities: {
@@ -1106,10 +1168,14 @@ const server = new Server(
 // Store server instance for notifications
 serverInstance = server;
 
-// コマンドライン引数の情報をログに出力
-console.error(
-  `Server started with options: ${IGNORE_ROBOTS_TXT ? "ignore-robots-txt" : "respect-robots-txt"}`
-);
+// サーバー設定の情報をログに出力
+console.error("Server started with configuration:", {
+  imageOutput: SERVER_CONFIG.imageOutput,
+  imageLayout: SERVER_CONFIG.imageLayout,
+  imageMaxCount: SERVER_CONFIG.imageMaxCount,
+  textMaxLength: SERVER_CONFIG.textMaxLength,
+  ignoreRobotsTxt: SERVER_CONFIG.ignoreRobotsTxt,
+});
 
 interface RequestHandlerExtra {
   signal: AbortSignal;
@@ -1121,45 +1187,52 @@ server.setRequestHandler(
     const tools = [
       {
         name: "imageFetch",
-        description: `
-画像取得に強いMCPフェッチツール。記事本文をMarkdown化し、ページ内の画像を抽出・最適化して返します。
+        description: `Fetches web content and converts to clean markdown. Optionally processes images from the page.
 
-新APIの既定（imagesを指定した場合）
-- 画像: 取得してBASE64で返却（最大3枚を縦結合した1枚JPEG）
-- 保存: しない（オプトイン）
-- クロスオリジン: 許可（CDN想定）
+**IMPORTANT PARAMETER USAGE GUIDELINES:**
 
-パラメータ（新API）
-- url: 取得先URL（必須）
-- images: true | { output, layout, maxCount, startIndex, size, originPolicy, saveDir }
-  - output: "base64" | "file" | "both"（既定: base64）
-  - layout: "merged" | "individual" | "both"（既定: merged）
-  - maxCount/startIndex（既定: 3 / 0）
-  - size: { maxWidth, maxHeight, quality }（既定: 1000/1600/80）
-  - originPolicy: "cross-origin" | "same-origin"（既定: cross-origin）
-- text: { maxLength, startIndex, raw }（既定: 20000/0/false）
-- security: { ignoreRobotsTxt }（既定: false）
+Most configuration is set at the server level by the user. You should ONLY modify these parameters when:
+- The user EXPLICITLY asks you to change them
+- You have a specific contextual reason (for saveDir only)
 
-旧APIキー（enableFetchImages, returnBase64, saveImages, imageMax*, imageStartIndex 等）は後方互換のため引き続き受け付けます（非推奨）。
+**Parameters:**
 
-Examples（新API）
-{
-  "url": "https://example.com",
-  "images": true
-}
+1. **url** (required, string)
+   - The URL to fetch
 
-{
-  "url": "https://example.com",
-  "images": { "output": "both", "layout": "both", "maxCount": 4 }
-}
+2. **images** (optional, boolean or object)
+   - Set to true to enable image fetching
+   - Or provide an object with:
+     - **maxCount** (number, 0-10): Maximum images to fetch
+       ⚠️ DO NOT modify unless user explicitly specifies a number
+       Server default: ${SERVER_CONFIG.imageMaxCount}
+     - **saveDir** (string): Custom directory to save images
+       ✓ You MAY set this based on context (e.g., project-specific folder)
+       ✗ User can override if they specify a location
 
-Examples（旧API互換）
-{
-  "url": "https://example.com",
-  "enableFetchImages": true,
-  "returnBase64": true,
-  "imageMaxCount": 2
-}`,
+3. **text** (optional, object)
+   - **raw** (boolean): Return raw HTML instead of markdown
+     ✓ Use when user asks for "raw content" or "original HTML"
+   - **maxLength** (number): Maximum characters to return
+     ⚠️ DO NOT modify unless user explicitly mentions content length
+     Server default: ${SERVER_CONFIG.textMaxLength}
+
+**Typical Usage:**
+
+Simple fetch:
+{ "url": "https://example.com" }
+
+Fetch with images:
+{ "url": "https://example.com", "images": true }
+
+Fetch with custom save location:
+{ "url": "https://example.com", "images": { "saveDir": "/path/to/project/docs" } }
+
+Fetch raw HTML:
+{ "url": "https://example.com", "text": { "raw": true } }
+
+**Server Configuration:**
+This server is configured with: output=${SERVER_CONFIG.imageOutput}, layout=${SERVER_CONFIG.imageLayout}, maxCount=${SERVER_CONFIG.imageMaxCount}, maxLength=${SERVER_CONFIG.textMaxLength}`,
         inputSchema: zodToJsonSchema(FetchArgsSchema),
       },
     ];
@@ -1193,217 +1266,109 @@ server.setRequestHandler(
         throw new Error(`Invalid arguments: ${parsed.error}`);
       }
 
-      const a = parsed.data as Record<string, unknown> & {
-        url: string;
-        images?: unknown;
-        text?: { maxLength?: number; startIndex?: number; raw?: boolean };
-        security?: { ignoreRobotsTxt?: boolean };
-        // legacy fields (all optional)
-        enableFetchImages?: boolean;
-        saveImages?: boolean;
-        returnBase64?: boolean;
-        imageMaxWidth?: number;
-        imageMaxHeight?: number;
-        imageQuality?: number;
-        imageStartIndex?: number;
-        allowCrossOriginImages?: boolean;
-        startIndex?: number;
-        maxLength?: number;
-        raw?: boolean;
-        ignoreRobotsTxt?: boolean;
-      };
+      const { url, images, text } = parsed.data;
 
-      // Legacy mode detection: no new keys and/or legacy keys present
-      const hasNewKeys =
-        a.images !== undefined ||
-        a.text !== undefined ||
-        a.security !== undefined;
-      const hasLegacyKeys =
-        a.enableFetchImages !== undefined ||
-        a.saveImages !== undefined ||
-        a.returnBase64 !== undefined ||
-        a.imageMaxWidth !== undefined ||
-        a.imageMaxHeight !== undefined ||
-        a.imageQuality !== undefined ||
-        a.imageStartIndex !== undefined ||
-        a.allowCrossOriginImages !== undefined ||
-        a.startIndex !== undefined ||
-        a.maxLength !== undefined ||
-        a.raw !== undefined;
+      // Build fetch options from server config with per-request overrides
+      const fetchOptions = {
+        // From server config
+        imageMaxWidth: SERVER_CONFIG.imageMaxWidth,
+        imageMaxHeight: SERVER_CONFIG.imageMaxHeight,
+        imageQuality: SERVER_CONFIG.imageQuality,
+        imageStartIndex: SERVER_CONFIG.imageStartIndex,
+        imageMaxCount: SERVER_CONFIG.imageMaxCount,
+        startIndex: SERVER_CONFIG.textStartIndex,
+        maxLength: SERVER_CONFIG.textMaxLength,
+        allowCrossOriginImages:
+          SERVER_CONFIG.imageOriginPolicy === "cross-origin",
+        output: SERVER_CONFIG.imageOutput,
+        layout: SERVER_CONFIG.imageLayout,
 
-      const legacyMode =
-        (!hasNewKeys && hasLegacyKeys) || (!hasNewKeys && !hasLegacyKeys);
-
-      // Build fetch options with backward compatibility
-      const fetchOptions: {
-        imageMaxCount: number;
-        imageMaxHeight: number;
-        imageMaxWidth: number;
-        imageQuality: number;
-        imageStartIndex: number;
-        startIndex: number;
-        maxLength: number;
-        enableFetchImages: boolean;
-        allowCrossOriginImages: boolean;
-        saveImages: boolean;
-        returnBase64: boolean;
-        raw?: boolean;
-        output?: "base64" | "file" | "both";
-        layout?: "merged" | "individual" | "both";
-      } = {
-        imageMaxCount: 3,
-        imageMaxHeight: 4000,
-        imageMaxWidth: 1000,
-        imageQuality: 80,
-        imageStartIndex: 0,
-        startIndex: 0,
-        maxLength: 20000,
+        // Image processing defaults
         enableFetchImages: false,
-        allowCrossOriginImages: true,
         saveImages: false,
         returnBase64: false,
-        // new API additions (optional)
-        output: undefined,
-        layout: undefined,
+        raw: false,
       };
 
-      if (legacyMode) {
-        // Legacy defaults
-        fetchOptions.startIndex =
-          (a.startIndex as number | undefined) ?? fetchOptions.startIndex;
-        fetchOptions.maxLength =
-          (a.maxLength as number | undefined) ?? fetchOptions.maxLength;
-        fetchOptions.raw = a.raw ?? false;
-        fetchOptions.imageMaxCount =
-          (a.imageMaxCount as number | undefined) ?? fetchOptions.imageMaxCount;
-        fetchOptions.imageMaxHeight =
-          (a.imageMaxHeight as number | undefined) ??
-          fetchOptions.imageMaxHeight;
-        fetchOptions.imageMaxWidth =
-          (a.imageMaxWidth as number | undefined) ?? fetchOptions.imageMaxWidth;
-        fetchOptions.imageQuality =
-          (a.imageQuality as number | undefined) ?? fetchOptions.imageQuality;
-        fetchOptions.imageStartIndex =
-          (a.imageStartIndex as number | undefined) ??
-          fetchOptions.imageStartIndex;
-        fetchOptions.enableFetchImages = a.enableFetchImages ?? false;
-        fetchOptions.allowCrossOriginImages = a.allowCrossOriginImages ?? true;
-        fetchOptions.saveImages = a.saveImages ?? true; // keep previous default behavior
-        fetchOptions.returnBase64 = a.returnBase64 ?? false;
-        // In legacy mode we preserve prior implicit behavior: individual images saved when any saving occurs
-        fetchOptions.output =
-          fetchOptions.saveImages && fetchOptions.returnBase64
-            ? "both"
-            : fetchOptions.returnBase64
-              ? "base64"
-              : fetchOptions.saveImages
-                ? "file"
-                : undefined;
-        fetchOptions.layout = "merged"; // merged remains primary; individual saving handled inside legacy path
-      } else {
-        // New API mode
-        const imagesCfg = a.images;
-        const textCfg = a.text || {};
-        const securityCfg = a.security || {};
+      // Apply per-request overrides for images
+      if (images) {
+        fetchOptions.enableFetchImages = true;
 
-        fetchOptions.startIndex = textCfg.startIndex ?? fetchOptions.startIndex;
-        fetchOptions.maxLength = textCfg.maxLength ?? fetchOptions.maxLength;
-        fetchOptions.raw = textCfg.raw ?? false;
+        // Determine output mode from server config
+        fetchOptions.saveImages =
+          SERVER_CONFIG.imageOutput === "file" ||
+          SERVER_CONFIG.imageOutput === "both";
+        fetchOptions.returnBase64 =
+          SERVER_CONFIG.imageOutput === "base64" ||
+          SERVER_CONFIG.imageOutput === "both";
 
-        // images: true | object | undefined (default true for new API?)
-        const imagesEnabled =
-          imagesCfg === undefined
-            ? false
-            : typeof imagesCfg === "boolean"
-              ? imagesCfg
-              : true;
-        fetchOptions.enableFetchImages = imagesEnabled;
-
-        if (imagesEnabled) {
-          const cfg = (
-            typeof imagesCfg === "object" && imagesCfg !== null
-              ? (imagesCfg as any)
-              : {}
-          ) as {
-            output?: "base64" | "file" | "both";
-            layout?: "merged" | "individual" | "both";
-            maxCount?: number;
-            startIndex?: number;
-            size?: { maxWidth?: number; maxHeight?: number; quality?: number };
-            originPolicy?: "cross-origin" | "same-origin";
-            saveDir?: string;
-          };
-          fetchOptions.imageMaxCount =
-            cfg.maxCount ?? fetchOptions.imageMaxCount;
-          fetchOptions.imageStartIndex =
-            cfg.startIndex ?? fetchOptions.imageStartIndex;
-          const size = cfg.size || {};
-          fetchOptions.imageMaxWidth =
-            size.maxWidth ?? fetchOptions.imageMaxWidth;
-          fetchOptions.imageMaxHeight =
-            size.maxHeight ?? fetchOptions.imageMaxHeight;
-          fetchOptions.imageQuality = size.quality ?? fetchOptions.imageQuality;
-          fetchOptions.allowCrossOriginImages =
-            (cfg.originPolicy ?? "cross-origin") === "cross-origin";
-          fetchOptions.saveImages =
-            (cfg.output ?? "base64") === "file" ||
-            (cfg.output ?? "base64") === "both";
-          fetchOptions.returnBase64 =
-            (cfg.output ?? "base64") === "base64" ||
-            (cfg.output ?? "base64") === "both";
-          fetchOptions.output = cfg.output ?? "base64";
-          fetchOptions.layout = cfg.layout ?? "merged";
-          // NOTE: saveDir (cfg.saveDir) is respected in save functions when implemented (future)
+        if (typeof images === "object") {
+          if (images.maxCount !== undefined) {
+            fetchOptions.imageMaxCount = images.maxCount;
+          }
+          // Note: images.saveDir would be used in saveImageToFile
+          // TODO: Pass saveDir through to file saving functions
         }
-        // security
-        a.ignoreRobotsTxt = securityCfg.ignoreRobotsTxt ?? false;
       }
 
-      // robots.txt respect unless ignored
-      if (!a.ignoreRobotsTxt && !IGNORE_ROBOTS_TXT) {
-        await checkRobotsTxt(a.url, DEFAULT_USER_AGENT_AUTONOMOUS);
+      // Apply per-request overrides for text
+      if (text) {
+        if (text.raw !== undefined) {
+          fetchOptions.raw = text.raw;
+        }
+        if (text.maxLength !== undefined) {
+          fetchOptions.maxLength = text.maxLength;
+        }
       }
 
-      const { content, images, remainingContent, remainingImages, title } =
-        await fetchUrl(
-          a.url,
-          DEFAULT_USER_AGENT_AUTONOMOUS,
-          fetchOptions.raw ?? false,
-          fetchOptions
-        );
+      // Check robots.txt unless disabled in server config
+      if (!SERVER_CONFIG.ignoreRobotsTxt) {
+        await checkRobotsTxt(url, DEFAULT_USER_AGENT_AUTONOMOUS);
+      }
+
+      const {
+        content,
+        images: processedImages,
+        remainingContent,
+        remainingImages,
+        title,
+      } = await fetchUrl(
+        url,
+        DEFAULT_USER_AGENT_AUTONOMOUS,
+        fetchOptions.raw,
+        fetchOptions
+      );
 
       let finalContent = content.slice(
         fetchOptions.startIndex,
         fetchOptions.startIndex + fetchOptions.maxLength
       );
 
-      // 残りの情報を追加
+      // Add pagination info
       const remainingInfo = [];
       if (remainingContent > 0) {
         remainingInfo.push(`${remainingContent} characters of text remaining`);
       }
       if (remainingImages > 0) {
         remainingInfo.push(
-          `${remainingImages} more images available (${fetchOptions.imageStartIndex + images.length}/${fetchOptions.imageStartIndex + images.length + remainingImages} shown)`
+          `${remainingImages} more images available (use server config to change pagination)`
         );
       }
 
       if (remainingInfo.length > 0) {
-        finalContent += `\n\n<e>Content truncated. ${remainingInfo.join(", ")}. Call the imageFetch tool with start_index=${
-          fetchOptions.startIndex + fetchOptions.maxLength
-        } and/or imageStartIndex=${fetchOptions.imageStartIndex + images.length} to get more content.</e>`;
+        finalContent += `\n\n<e>Content truncated. ${remainingInfo.join(", ")}.</e>`;
       }
 
-      // MCP レスポンスの作成
+      // Build MCP response
       const responseContent: MCPResponseContent[] = [
         {
           type: "text",
-          text: `Contents of ${parsed.data.url}${title ? `: ${title}` : ""}:\n${finalContent}`,
+          text: `Contents of ${url}${title ? `: ${title}` : ""}:\n${finalContent}`,
         },
       ];
 
-      // 画像があれば追加（Base64データが存在する場合のみ）
-      for (const image of images) {
+      // Add images if base64 data exists
+      for (const image of processedImages) {
         if (image.data) {
           responseContent.push({
             type: "image",
@@ -1413,8 +1378,8 @@ server.setRequestHandler(
         }
       }
 
-      // 保存されたファイルの情報があれば追加
-      const savedFiles = images.filter((img) => img.filePath);
+      // Add file save info
+      const savedFiles = processedImages.filter((img) => img.filePath);
       if (savedFiles.length > 0) {
         const fileInfoText = savedFiles
           .map((img, index) => `Image ${index + 1} saved to: ${img.filePath}`)
