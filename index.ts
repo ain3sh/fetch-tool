@@ -8,6 +8,12 @@ import type { Readable } from "node:stream";
 import { URL } from "node:url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { Readability } from "@mozilla/readability";
 import { JSDOM } from "jsdom";
 import type { RequestInit } from "node-fetch";
@@ -607,17 +613,7 @@ const FetchArgsSchema = z.object({
     .optional(),
 });
 
-const ListToolsSchema = z.object({
-  method: z.literal("tools/list"),
-});
-
-const CallToolSchema = z.object({
-  method: z.literal("tools/call"),
-  params: z.object({
-    name: z.string(),
-    arguments: z.record(z.unknown()).optional(),
-  }),
-});
+// ListToolsRequestSchema and CallToolRequestSchema are imported from SDK
 
 function extractContentFromHtml(
   html: string,
@@ -1152,7 +1148,7 @@ interface RequestHandlerExtra {
 }
 
 server.setRequestHandler(
-  ListToolsSchema,
+  ListToolsRequestSchema,
   async (_request: { method: "tools/list" }, _extra: RequestHandlerExtra) => {
     const tools = [
       {
@@ -1216,7 +1212,7 @@ type MCPResponseContent =
   | { type: "image"; mimeType: string; data: string };
 
 server.setRequestHandler(
-  CallToolSchema,
+  CallToolRequestSchema,
   async (
     request: {
       method: "tools/call";
@@ -1227,7 +1223,7 @@ server.setRequestHandler(
     try {
       const { name, arguments: args } = request.params;
 
-      if (name !== "imageFetch") {
+      if (name !== "fetch") {
         throw new Error(`Unknown tool: ${name}`);
       }
 
@@ -1380,20 +1376,10 @@ server.setRequestHandler(
   }
 );
 
-// Resources handlers
-const ListResourcesSchema = z.object({
-  method: z.literal("resources/list"),
-});
-
-const ReadResourceSchema = z.object({
-  method: z.literal("resources/read"),
-  params: z.object({
-    uri: z.string(),
-  }),
-});
+// Resources handlers (schemas imported from SDK)
 
 server.setRequestHandler(
-  ListResourcesSchema,
+  ListResourcesRequestSchema,
   async (_request: { method: "resources/list" }) => {
     const resources = Array.from(imageResources.values()).map((resource) => ({
       uri: resource.uri,
@@ -1409,7 +1395,7 @@ server.setRequestHandler(
 );
 
 server.setRequestHandler(
-  ReadResourceSchema,
+  ReadResourceRequestSchema,
   async (request: { method: "resources/read"; params: { uri: string } }) => {
     const resource = imageResources.get(request.params.uri);
 
