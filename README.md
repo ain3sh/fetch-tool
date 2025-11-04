@@ -1,6 +1,6 @@
 # MCP Fetch
 
-### _Finally, a fetch tool that doesn't make your LLM overthink._
+### _Web fetching that handles what built-in tools can't: images, clean markdown extraction, and organized file management—configured once at the server level, not in every prompt._
 
 > **Note:** This is a fork of [kazuph/mcp-fetch](https://github.com/kazuph/mcp-fetch) with LLM-friendly configuration improvements. See [What's Different](#whats-different-v200) below.
 
@@ -8,25 +8,30 @@ Model Context Protocol server for fetching web content and processing images, **
 
 ## Why This Over Built-in Fetch Tools?
 
-Your LLM assistant already has basic web fetching (Claude Code's WebFetch, built-in browsing, etc.). So why use this?
+Most AI coding assistants include basic web fetching, but they're limited:
 
-**Built-in tools:**
-- ✅ Quick and simple
-- ❌ Text-only (no images)
-- ❌ No customization
-- ❌ LLM can't save files or process images
+**Claude Code's WebFetch:**
+- ✅ Fetches text and PDFs
+- ❌ No image fetching
+- ❌ No file saving
+- ❌ Cannot handle JavaScript-rendered sites
 
-**This tool (MCP Fetch):**
-- ✅ Fetches text **and** images
-- ✅ **You** control quality, size, output format (not the LLM)
-- ✅ Automatically saves images to disk (`~/Downloads/mcp-fetch/`)
-- ✅ Optional: Show images in Claude's interface
-- ✅ Security: SSRF protection, robots.txt compliance, size limits
-- ✅ Clean markdown extraction (Mozilla Readability + Turndown)
+**Cursor's @Web:**
+- Focused on search queries for context
+- Images require manual drag-and-drop
 
-**The key difference:** Built-in tools are fine for quick text scraping. This tool is for when you need the actual *content* - articles with images, documentation with diagrams, blog posts with screenshots - properly processed and optionally saved for later use.
+**Aider's /web:**
+- Text-only scraping (httpx or Playwright)
+- Designed for documentation lookups
 
-And here's the twist: **you configure it once at the server level** (image quality, dimensions, output format), so the LLM doesn't waste tokens asking "should I return base64?" or "what JPEG quality?" on every request. It just fetches what you asked for, the way you already configured it.
+**This tool adds:**
+- **Image pipeline**: Fetch, resize, optimize, merge, and save images automatically
+- **Clean markdown**: Uses Mozilla Readability + Turndown for article extraction
+- **File management**: Organized local storage with date-based directories
+- **Server-level config**: Set quality/dimensions/format once—LLMs just provide the URL
+- **MCP protocol**: Works with any MCP-compatible client
+
+Perfect for when you need web content *with* images, processed and saved locally, without making your LLM negotiate JPEG quality settings.
 
 ## Quick Start
 
