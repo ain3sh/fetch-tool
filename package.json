@@ -1,8 +1,8 @@
 {
-  "name": "@kazuph/mcp-fetch",
-  "version": "1.6.2",
+  "name": "@ain3sh/mcp-fetch",
+  "version": "2.0.0",
   "type": "module",
-  "description": "A Model Context Protocol server that provides web content fetching capabilities with automatic image saving and optional AI display",
+  "description": "LLM-friendly fork of kazuph/mcp-fetch - Model Context Protocol server with server-level configuration for cleaner LLM interaction",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
@@ -35,7 +35,7 @@
     "typescript": "^5.3.3",
     "vitest": "^2.0.5"
   },
-  "author": "kazuph",
+  "author": "ain3sh (fork), kazuph (original)",
   "license": "MIT",
   "publishConfig": {
     "access": "public"
@@ -47,7 +47,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kazuph/mcp-fetch.git"
+    "url": "git+https://github.com/ain3sh/fetch-tool.git"
   },
   "keywords": [
     "mcp",
@@ -57,12 +57,14 @@
     "image",
     "processing",
     "claude",
-    "ai"
+    "ai",
+    "llm-friendly",
+    "server-config"
   ],
   "bugs": {
-    "url": "https://github.com/kazuph/mcp-fetch/issues"
+    "url": "https://github.com/ain3sh/fetch-tool/issues"
   },
-  "homepage": "https://github.com/kazuph/mcp-fetch#readme",
+  "homepage": "https://github.com/ain3sh/fetch-tool#readme",
   "bin": {
     "mcp-fetch": "dist/index.js"
   }

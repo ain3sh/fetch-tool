@@ -135,33 +135,54 @@ Current approach relies on:
 
 ## Deployment
 
-The tool is designed for npx usage:
+This fork can be used directly from GitHub without npm publishing:
+
+### Option 1: Direct from GitHub (Recommended)
 ```bash
-npx -y @kazuph/mcp-fetch
+npx -y github:ain3sh/fetch-tool
 ```
 
-For Claude Desktop integration, add to MCP server configuration with optional customization:
+### Option 2: Clone and Build Locally
+```bash
+git clone https://github.com/ain3sh/fetch-tool.git
+cd fetch-tool
+npm install && npm run build
+```
 
-**Basic (defaults):**
+### Claude Desktop Configuration
+
+**Basic (GitHub):**
 ```json
 {
   "mcpServers": {
     "fetch": {
       "command": "npx",
-      "args": ["-y", "@kazuph/mcp-fetch"]
+      "args": ["-y", "github:ain3sh/fetch-tool"]
     }
   }
 }
 ```
 
-**With CLI arguments:**
+**Basic (Local):**
+```json
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "node",
+      "args": ["/absolute/path/to/fetch-tool/dist/index.js"]
+    }
+  }
+}
+```
+
+**With CLI arguments (GitHub):**
 ```json
 {
   "mcpServers": {
     "fetch": {
       "command": "npx",
       "args": [
-        "-y", "@kazuph/mcp-fetch",
+        "-y", "github:ain3sh/fetch-tool",
         "--image-output", "both",
         "--image-quality", "90"
       ]
@@ -176,7 +197,7 @@ For Claude Desktop integration, add to MCP server configuration with optional cu
   "mcpServers": {
     "fetch": {
       "command": "npx",
-      "args": ["-y", "@kazuph/mcp-fetch"],
+      "args": ["-y", "github:ain3sh/fetch-tool"],
       "env": {
         "MCP_FETCH_IMAGE_OUTPUT": "both",
         "MCP_FETCH_IMAGE_QUALITY": "90"

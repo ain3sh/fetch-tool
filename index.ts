@@ -1152,7 +1152,7 @@ const SERVER_CONFIG = loadServerConfig(args);
 const server = new Server(
   {
     name: "mcp-fetch",
-    version: "1.6.2",
+    version: "2.0.0",
   },
   {
     capabilities: {

@@ -1,25 +1,72 @@
 # MCP Fetch
 
-Model Context Protocol server for fetching web content and processing images. This allows Claude Desktop (or any MCP client) to fetch web content and handle images appropriately.
+### _Finally, a fetch tool that doesn't make your LLM overthink._
 
-<a href="https://glama.ai/mcp/servers/5mknfdhyrg"><img width="380" height="200" src="https://glama.ai/mcp/servers/5mknfdhyrg/badge" alt="@kazuph/mcp-fetch MCP server" /></a>
+> **Note:** This is a fork of [kazuph/mcp-fetch](https://github.com/kazuph/mcp-fetch) with LLM-friendly configuration improvements. See [What's Different](#whats-different-v200) below.
 
-## Quick Start (For Users)
+Model Context Protocol server for fetching web content and processing images, **designed for humans to configure once and LLMs to use simply**.
 
-To use this tool with Claude Desktop, add the following to your Claude Desktop configuration (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+## Why This Over Built-in Fetch Tools?
+
+Your LLM assistant already has basic web fetching (Claude Code's WebFetch, built-in browsing, etc.). So why use this?
+
+**Built-in tools:**
+- ✅ Quick and simple
+- ❌ Text-only (no images)
+- ❌ No customization
+- ❌ LLM can't save files or process images
+
+**This tool (MCP Fetch):**
+- ✅ Fetches text **and** images
+- ✅ **You** control quality, size, output format (not the LLM)
+- ✅ Automatically saves images to disk (`~/Downloads/mcp-fetch/`)
+- ✅ Optional: Show images in Claude's interface
+- ✅ Security: SSRF protection, robots.txt compliance, size limits
+- ✅ Clean markdown extraction (Mozilla Readability + Turndown)
+
+**The key difference:** Built-in tools are fine for quick text scraping. This tool is for when you need the actual *content* - articles with images, documentation with diagrams, blog posts with screenshots - properly processed and optionally saved for later use.
+
+And here's the twist: **you configure it once at the server level** (image quality, dimensions, output format), so the LLM doesn't waste tokens asking "should I return base64?" or "what JPEG quality?" on every request. It just fetches what you asked for, the way you already configured it.
+
+## Quick Start
+
+### Option 1: Use Directly from GitHub (Recommended)
+
+Add the following to your Claude Desktop configuration (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "fetch": {
       "command": "npx",
-      "args": ["-y", "@kazuph/mcp-fetch"]
+      "args": ["-y", "github:ain3sh/fetch-tool"]
     }
   }
 }
 ```
 
-This will automatically download and run the latest version with default settings.
+### Option 2: Clone and Build Locally
+
+```bash
+git clone https://github.com/ain3sh/fetch-tool.git
+cd fetch-tool
+npm install && npm run build
+```
+
+Then configure Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "node",
+      "args": ["/absolute/path/to/fetch-tool/dist/index.js"]
+    }
+  }
+}
+```
+
+Both options work the same - GitHub method is easier, local gives you more control.
 
 ## Features
 
@@ -32,6 +79,20 @@ This will automatically download and run the latest version with default setting
 - **GIF Support**: Extracts first frame from animated GIFs
 - **Security**: SSRF protection, robots.txt compliance, size limits, timeouts
 - **Flexible Configuration**: Server-level configuration via CLI args and environment variables
+
+## What's Different (v2.0.0)
+
+This fork simplifies the tool interface for better LLM interaction:
+
+- **🎯 Moved config to server-level**: Image quality, dimensions, output format, etc. configured once via CLI/env
+- **✨ Simplified parameters**: LLM only sees `url`, `images` (bool/object), `text` (object) - no more parameter soup
+- **🚀 Better defaults**: Sensible out-of-the-box configuration that just works
+- **📝 Clear guidance**: Tool description tells LLMs exactly when to touch parameters and when not to
+- **🔧 Flexible deployment**: Use directly from GitHub via npx, or clone locally
+
+**Why this matters:** LLMs don't need to fiddle with JPEG quality settings or pixel dimensions on every request. You set your preferences once in the server config, and the LLM focuses on what content to fetch.
+
+See the full [Changelog](#changelog) for migration details.
 
 ## Configuration
 
@@ -80,7 +141,7 @@ Most configuration is done at the server level, not per-request. Configure via *
       "command": "npx",
       "args": [
         "-y",
-        "@kazuph/mcp-fetch",
+        "github:ain3sh/fetch-tool",
         "--image-output", "both",
         "--image-layout", "merged",
         "--image-max-count", "5",
@@ -118,7 +179,7 @@ Most configuration is done at the server level, not per-request. Configure via *
   "mcpServers": {
     "fetch": {
       "command": "npx",
-      "args": ["-y", "@kazuph/mcp-fetch"],
+      "args": ["-y", "github:ain3sh/fetch-tool"],
       "env": {
         "MCP_FETCH_IMAGE_OUTPUT": "both",
         "MCP_FETCH_IMAGE_LAYOUT": "merged",
@@ -171,7 +232,7 @@ Configuration is applied in this order (highest to lowest priority):
   "mcpServers": {
     "fetch": {
       "command": "npx",
-      "args": ["-y", "@kazuph/mcp-fetch", "--image-output", "file"]
+      "args": ["-y", "github:ain3sh/fetch-tool", "--image-output", "file"]
     }
   }
 }
@@ -183,7 +244,7 @@ Configuration is applied in this order (highest to lowest priority):
   "mcpServers": {
     "fetch": {
       "command": "npx",
-      "args": ["-y", "@kazuph/mcp-fetch", "--image-output", "both"]
+      "args": ["-y", "github:ain3sh/fetch-tool", "--image-output", "both"]
     }
   }
 }
@@ -196,7 +257,7 @@ Configuration is applied in this order (highest to lowest priority):
     "fetch": {
       "command": "npx",
       "args": [
-        "-y", "@kazuph/mcp-fetch",
+        "-y", "github:ain3sh/fetch-tool",
         "--image-quality", "95",
         "--image-max-count", "10",
         "--text-max-length", "100000"
@@ -212,7 +273,7 @@ Configuration is applied in this order (highest to lowest priority):
   "mcpServers": {
     "fetch": {
       "command": "npx",
-      "args": ["-y", "@kazuph/mcp-fetch", "--image-origin-policy", "same-origin"]
+      "args": ["-y", "github:ain3sh/fetch-tool", "--image-origin-policy", "same-origin"]
     }
   }
 }
@@ -300,6 +361,32 @@ Add the following to your MCP client's configuration:
 
 ## Changelog
 
+### v2.0.0 (Fork - 2025-01-04)
+- **BREAKING CHANGE**: Moved most parameters to server-level CLI args and environment variables
+- **NEW**: Simplified tool interface - LLM only sees `url`, `images`, `text` parameters
+- **NEW**: CLI argument parser for `--image-*`, `--text-*`, and `--ignore-robots-txt` flags
+- **NEW**: Environment variable support for `MCP_FETCH_IMAGE_*` and `MCP_FETCH_TEXT_*`
+- **NEW**: Configuration priority system: Request param > CLI arg > Env var > Default
+- **IMPROVED**: Tool description now includes explicit LLM usage guidelines
+- **IMPROVED**: Documentation confirms cross-platform support (not macOS-only)
+- **REMOVED**: 15+ legacy parameters moved to server-level configuration
+
+**Migration from v1.x:**
+```json
+// Before (v1.x): LLM had to manage all settings
+{ "url": "...", "enableFetchImages": true, "returnBase64": true, "imageQuality": 80, ... }
+
+// After (v2.0): Configure server once
+"args": ["github:ain3sh/fetch-tool", "--image-output", "base64", "--image-quality", "80"]
+
+// LLM just calls
+{ "url": "...", "images": true }
+```
+
+---
+
+### Original Upstream Releases
+
 ### v1.2.0
 - **BREAKING CHANGE**: Tool name changed from `fetch` to `imageFetch` to avoid conflicts
 - **NEW**: Automatic file saving - Images are now saved to `~/Downloads/mcp-fetch/YYYY-MM-DD/` by default
@@ -323,3 +410,15 @@ Add the following to your MCP client's configuration:
 - Web content extraction
 - Image processing and optimization
 - Pagination support
+
+---
+
+## Attribution
+
+This project is a fork of [mcp-fetch](https://github.com/kazuph/mcp-fetch) by [kazuph](https://github.com/kazuph).
+
+**Original work**: Copyright (c) 2024 kazuph
+**License**: MIT
+**Fork maintained by**: [ain3sh](https://github.com/ain3sh)
+
+All credit for the core functionality, architecture, and original implementation goes to kazuph. This fork adds LLM-friendly configuration improvements while preserving the excellent foundation of the original project.
