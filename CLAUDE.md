@@ -34,15 +34,16 @@ npm start
 ## Architecture
 
 ### Single-File Design
-- **Core logic**: All functionality is in `index.ts` (606 lines)
+- **Core logic**: All functionality is in `index.ts`
 - **Type definitions**: External module types in `types.d.ts`
 - This is intentional - the tool has focused scope and benefits from centralized logic
 
 ### Key Components
 - **MCP Server**: Uses `@modelcontextprotocol/sdk` for protocol implementation
+- **Configuration System**: CLI args & env vars → ServerConfig → Per-request overrides
 - **Content Pipeline**: HTML → Readability → Markdown → Pagination
 - **Image Pipeline**: Fetch → JPEG conversion → Vertical merging → File saving → Optional Base64 encoding
-- **Parameter Validation**: Zod schemas with automatic type conversion from string/number unions
+- **Parameter Validation**: Simplified Zod schema with only LLM-visible parameters
 
 ### Dependencies Architecture
 - **Content Processing**: `@mozilla/readability` + `jsdom` + `turndown` chain
@@ -52,14 +53,51 @@ npm start
 
 ## Code Patterns
 
+### Configuration Architecture (NEW)
+Most configuration moved to server-level (CLI args/env vars), not per-request parameters:
+
+**Server Configuration (index.ts:66-219):**
+```typescript
+interface ServerConfig {
+  imageMaxWidth: number;
+  imageMaxHeight: number;
+  imageQuality: number;
+  imageOutput: "base64" | "file" | "both";
+  imageLayout: "merged" | "individual" | "both";
+  imageOriginPolicy: "cross-origin" | "same-origin";
+  imageStartIndex: number;
+  imageMaxCount: number;
+  textStartIndex: number;
+  textMaxLength: number;
+  ignoreRobotsTxt: boolean;
+}
+
+const SERVER_CONFIG = loadServerConfig(process.argv.slice(2));
+```
+
+**Priority Order:** Request param > CLI arg > Env var > Default
+
 ### Parameter Handling
-Parameters use union types (`string | number`) with Zod validation for automatic type conversion:
+Simplified schema exposes only essential params to LLM (index.ts:602-633):
 
 ```typescript
-url: z.string(),
-maxLength: z.union([z.string(), z.number()]).transform(Number).default(20000),
-enableFetchImages: z.union([z.string(), z.boolean()]).transform(toBool).default(false)
+const FetchArgsSchema = z.object({
+  url: z.string().url(),
+  images: z.union([
+    z.boolean(),
+    z.object({
+      maxCount: z.number().int().min(0).max(10).optional(),
+      saveDir: z.string().optional(),
+    }),
+  ]).optional(),
+  text: z.object({
+    raw: z.boolean().optional(),
+    maxLength: z.number().int().positive().max(1000000).optional(),
+  }).optional(),
+});
 ```
+
+**Rationale:** LLMs shouldn't manage image quality, dimensions, output formats, etc. Users configure these once at server startup.
 
 ### Error Handling
 Network operations include comprehensive error handling with specific error types for different failure scenarios.
@@ -102,13 +140,47 @@ The tool is designed for npx usage:
 npx -y @kazuph/mcp-fetch
 ```
 
-For Claude Desktop integration, add to MCP tools configuration:
+For Claude Desktop integration, add to MCP server configuration with optional customization:
+
+**Basic (defaults):**
 ```json
 {
-  "tools": {
-    "imageFetch": {
+  "mcpServers": {
+    "fetch": {
       "command": "npx",
       "args": ["-y", "@kazuph/mcp-fetch"]
+    }
+  }
+}
+```
+
+**With CLI arguments:**
+```json
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "npx",
+      "args": [
+        "-y", "@kazuph/mcp-fetch",
+        "--image-output", "both",
+        "--image-quality", "90"
+      ]
+    }
+  }
+}
+```
+
+**With environment variables:**
+```json
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "npx",
+      "args": ["-y", "@kazuph/mcp-fetch"],
+      "env": {
+        "MCP_FETCH_IMAGE_OUTPUT": "both",
+        "MCP_FETCH_IMAGE_QUALITY": "90"
+      }
     }
   }
 }
@@ -117,17 +189,18 @@ For Claude Desktop integration, add to MCP tools configuration:
 ## Important Implementation Details
 
 ### Platform Specificity
-- Designed for macOS (mentioned in README)
-- Sharp binaries include Darwin ARM64 support
+- **Cross-platform**: Works on Linux, macOS, and Windows (anywhere Node.js runs)
+- Sharp includes prebuilt binaries for all major platforms
+- No OS-specific dependencies (contrary to old README claims about macOS-only clipboard operations)
 
 ### Content Processing Limits
-- Default maxLength: 20,000 characters
-- Supports pagination via startIndex parameter
-- Image processing disabled by default (performance consideration)
+- Default maxLength: 20,000 characters (configurable via server config)
+- Supports pagination via startIndex (configured at server level)
+- Image processing enabled per-request via `images` parameter
 
 ### Robots.txt Compliance
 - Enabled by default for ethical web scraping
-- Can be disabled with `ignoreRobotsTxt: true` parameter
+- Can be disabled via server config: `--ignore-robots-txt` or `MCP_FETCH_IGNORE_ROBOTS_TXT=1`
 
 ## Common Development Workflow
 

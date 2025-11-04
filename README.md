@@ -6,12 +6,12 @@ Model Context Protocol server for fetching web content and processing images. Th
 
 ## Quick Start (For Users)
 
-To use this tool with Claude Desktop, simply add the following to your Claude Desktop configuration (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+To use this tool with Claude Desktop, add the following to your Claude Desktop configuration (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
-  "tools": {
-    "imageFetch": {
+  "mcpServers": {
+    "fetch": {
       "command": "npx",
       "args": ["-y", "@kazuph/mcp-fetch"]
     }
@@ -19,29 +19,204 @@ To use this tool with Claude Desktop, simply add the following to your Claude De
 }
 ```
 
-This will automatically download and run the latest version of the tool when needed.
-
-### Required Setup
-
-1. Enable Accessibility for Claude:
-   - Open System Settings
-   - Go to Privacy & Security > Accessibility
-   - Click the "+" button
-   - Add Claude from your Applications folder
-   - Turn ON the toggle for Claude
-
-This accessibility setting is required for automated clipboard operations (Cmd+V) to work properly.
+This will automatically download and run the latest version with default settings.
 
 ## Features
 
 - **Web Content Extraction**: Automatically extracts and formats web content as markdown
 - **Article Title Extraction**: Extracts and displays the title of the article
-- **Image Processing**: Optional processing of images from web pages with optimization (disabled by default, enable with `enableFetchImages: true`)
-- **File Saving**: Images are automatically saved to `~/Downloads/mcp-fetch/YYYY-MM-DD/` directory when processed
-- **Dual Output**: Both file saving and optional Base64 encoding for AI display
-- **Pagination Support**: Supports pagination for both text and images
+- **Image Processing**: Optional processing of images from web pages with optimization
+- **File Saving**: Images are saved to `~/Downloads/mcp-fetch/YYYY-MM-DD/` directory
+- **Dual Output**: Both file saving and Base64 encoding for AI display (configurable)
 - **JPEG Optimization**: Automatically optimizes images as JPEG for better performance
 - **GIF Support**: Extracts first frame from animated GIFs
+- **Security**: SSRF protection, robots.txt compliance, size limits, timeouts
+- **Flexible Configuration**: Server-level configuration via CLI args and environment variables
+
+## Configuration
+
+### Tool Parameters (LLM-Controlled)
+
+The tool exposes minimal parameters to the LLM to keep the interface clean and focused:
+
+**Required:**
+- `url` (string): The URL to fetch
+
+**Optional:**
+- `images` (boolean or object): Enable image fetching
+  - `true`: Enable with server defaults
+  - `{ maxCount: number }`: Override max images (only change if user explicitly requests)
+  - `{ saveDir: string }`: Custom save directory (LLM may set based on context)
+
+- `text` (object): Text processing options
+  - `raw` (boolean): Return raw HTML instead of markdown
+  - `maxLength` (number): Override maximum content length (only change if user explicitly requests)
+
+**Examples:**
+```json
+// Simple fetch
+{ "url": "https://example.com" }
+
+// Fetch with images
+{ "url": "https://example.com", "images": true }
+
+// Fetch with custom save location
+{ "url": "https://example.com", "images": { "saveDir": "/path/to/project/docs" } }
+
+// Fetch raw HTML
+{ "url": "https://example.com", "text": { "raw": true } }
+```
+
+### Server Configuration
+
+Most configuration is done at the server level, not per-request. Configure via **CLI arguments** or **environment variables** in your MCP client config:
+
+#### CLI Arguments
+
+```json
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@kazuph/mcp-fetch",
+        "--image-output", "both",
+        "--image-layout", "merged",
+        "--image-max-count", "5",
+        "--image-quality", "85",
+        "--text-max-length", "50000"
+      ]
+    }
+  }
+}
+```
+
+**Available CLI Arguments:**
+
+**Image Processing:**
+- `--image-max-width <pixels>` (default: 1000, range: 100-10000)
+- `--image-max-height <pixels>` (default: 4000, range: 100-10000)
+- `--image-quality <1-100>` (default: 80)
+- `--image-output <base64|file|both>` (default: base64)
+- `--image-layout <merged|individual|both>` (default: merged)
+- `--image-origin-policy <cross-origin|same-origin>` (default: cross-origin)
+- `--image-start-index <number>` (default: 0)
+- `--image-max-count <0-10>` (default: 3)
+
+**Text Processing:**
+- `--text-start-index <number>` (default: 0)
+- `--text-max-length <chars>` (default: 20000)
+
+**Security:**
+- `--ignore-robots-txt` (default: respect robots.txt)
+
+#### Environment Variables
+
+```json
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "npx",
+      "args": ["-y", "@kazuph/mcp-fetch"],
+      "env": {
+        "MCP_FETCH_IMAGE_OUTPUT": "both",
+        "MCP_FETCH_IMAGE_LAYOUT": "merged",
+        "MCP_FETCH_IMAGE_MAX_COUNT": "5",
+        "MCP_FETCH_IMAGE_QUALITY": "85",
+        "MCP_FETCH_TEXT_MAX_LENGTH": "50000"
+      }
+    }
+  }
+}
+```
+
+**Available Environment Variables:**
+
+**Image Processing:**
+- `MCP_FETCH_IMAGE_MAX_WIDTH` (pixels)
+- `MCP_FETCH_IMAGE_MAX_HEIGHT` (pixels)
+- `MCP_FETCH_IMAGE_QUALITY` (1-100)
+- `MCP_FETCH_IMAGE_OUTPUT` (base64|file|both)
+- `MCP_FETCH_IMAGE_LAYOUT` (merged|individual|both)
+- `MCP_FETCH_IMAGE_ORIGIN_POLICY` (cross-origin|same-origin)
+- `MCP_FETCH_IMAGE_START_INDEX` (number)
+- `MCP_FETCH_IMAGE_MAX_COUNT` (0-10)
+
+**Text Processing:**
+- `MCP_FETCH_TEXT_START_INDEX` (number)
+- `MCP_FETCH_TEXT_MAX_LENGTH` (characters)
+
+**Security:**
+- `MCP_FETCH_IGNORE_ROBOTS_TXT` (1 to ignore, unset to respect)
+- `MCP_FETCH_TIMEOUT_MS` (milliseconds, default: 12000)
+- `MCP_FETCH_MAX_REDIRECTS` (number, default: 3)
+- `MCP_FETCH_MAX_HTML_BYTES` (bytes, default: 2000000)
+- `MCP_FETCH_MAX_IMAGE_BYTES` (bytes, default: 10000000)
+- `MCP_FETCH_DISABLE_SSRF_GUARD` (1 to disable, unset to enable)
+
+#### Priority Order
+
+Configuration is applied in this order (highest to lowest priority):
+1. Per-request parameter (for the limited LLM-controlled params only)
+2. CLI argument
+3. Environment variable
+4. Built-in default
+
+### Common Configuration Scenarios
+
+**Save images to files only (no base64 in response):**
+```json
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "npx",
+      "args": ["-y", "@kazuph/mcp-fetch", "--image-output", "file"]
+    }
+  }
+}
+```
+
+**Show images in Claude and save to disk:**
+```json
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "npx",
+      "args": ["-y", "@kazuph/mcp-fetch", "--image-output", "both"]
+    }
+  }
+}
+```
+
+**High-quality images, more content:**
+```json
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "npx",
+      "args": [
+        "-y", "@kazuph/mcp-fetch",
+        "--image-quality", "95",
+        "--image-max-count", "10",
+        "--text-max-length", "100000"
+      ]
+    }
+  }
+}
+```
+
+**Same-origin images only (no CDN):**
+```json
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "npx",
+      "args": ["-y", "@kazuph/mcp-fetch", "--image-origin-policy", "same-origin"]
+    }
+  }
+}
+```
 
 ## For Developers
 
@@ -105,84 +280,23 @@ Add the following to your MCP client's configuration:
 }
 ```
 
-## Available Parameters
+## Security Features
 
-- `url` (required): The URL to fetch
-- `maxLength` (default: 20000): Maximum length of content to return
-- `startIndex` (default: 0): Starting position in content
-- `imageStartIndex` (default: 0): Starting position for image collection
-- `raw` (default: false): Return raw content instead of processed markdown
-- `imageMaxCount` (default: 3): Maximum number of images to process per request
-- `imageMaxHeight` (default: 4000): Maximum height of merged image
-- `imageMaxWidth` (default: 1000): Maximum width of merged image
-- `imageQuality` (default: 80): JPEG quality (1-100)
-- `enableFetchImages` (default: false): Enable fetching and processing of images. FOR CLAUDE USERS ONLY: YOU ARE ALLOWED TO ENABLE THIS FEATURE!!! CLAUDE CAN FETCH AND PROCESS IMAGES!!! ENJOY THIS CAPABILITY!!!!!
-- `allowCrossOriginImages` (default: true): When true, also fetch images hosted on different origins from the page
-- `saveImages` (default: true): Save processed images to local files
-- `returnBase64` (default: false): Return base64 encoded images for AI display
-- `ignoreRobotsTxt` (default: false): Ignore robots.txt restrictions
-
-### Security Hardening (v1.5.1)
-
-- Only `http://` and `https://` URLs are allowed for page and image fetches
-- Blocks private/loopback/link-local IPs and local hostnames (e.g., `localhost`, `.local`)
-- Manual redirect handling with validation (max 3 hops)
-- Request timeouts (default 12s, configurable via `MCP_FETCH_TIMEOUT_MS`)
-- Response size limits: HTML up to 2MB, images up to 10MB (tunable via env)
-
-Environment variables:
-
-- `MCP_FETCH_TIMEOUT_MS` (default: 12000)
-- `MCP_FETCH_MAX_REDIRECTS` (default: 3)
-- `MCP_FETCH_MAX_HTML_BYTES` (default: 2000000)
-- `MCP_FETCH_MAX_IMAGE_BYTES` (default: 10000000)
-
-## Examples
-
-### Basic Content Fetching (No Images)
-```json
-{
-  "url": "https://example.com"
-}
-```
-
-### Fetching with Images (File Saving Only)
-```json
-{
-  "url": "https://example.com",
-  "enableFetchImages": true,
-  "imageMaxCount": 3
-}
-```
-
-### Fetching with Images for AI Display
-```json
-{
-  "url": "https://example.com",
-  "enableFetchImages": true,
-  "returnBase64": true,
-  "imageMaxCount": 3
-}
-```
-
-### Paginating Through Images
-```json
-{
-  "url": "https://example.com",
-  "enableFetchImages": true,
-  "imageStartIndex": 3,
-  "imageMaxCount": 3
-}
-```
+- **SSRF Protection**: Only `http://` and `https://` URLs allowed
+- **IP Filtering**: Blocks private/loopback/link-local IPs and local hostnames (e.g., `localhost`, `.local`)
+- **Redirect Handling**: Manual redirect following with per-hop validation (max 3 hops)
+- **Timeouts**: Request timeouts prevent hanging (default 12s, configurable)
+- **Size Limits**: HTML up to 2MB, images up to 10MB (tunable via environment variables)
+- **Robots.txt**: Respects robots.txt by default (can be disabled via config)
 
 ## Notes
 
-- This tool is designed for macOS only due to its dependency on macOS-specific clipboard operations.
-- Images are processed using Sharp for optimal performance and quality.
-- When multiple images are found, they are merged vertically with consideration for size limits.
-- Animated GIFs are automatically handled by extracting their first frame.
-- **File Saving**: Images are automatically saved to `~/Downloads/mcp-fetch/YYYY-MM-DD/` with filename format `hostname_HHMMSS_index.jpg`
-- **Tool Name**: The tool name has been changed from `fetch` to `imageFetch` to avoid conflicts with native fetch functions.
+- **Platform**: Cross-platform (Linux, macOS, Windows) - works anywhere Node.js runs
+- **Image Processing**: Uses Sharp for high-performance image optimization
+- **Merging**: Multiple images are merged vertically with size constraints
+- **GIF Handling**: Animated GIFs automatically reduced to first frame
+- **File Organization**: Images saved to `~/Downloads/mcp-fetch/YYYY-MM-DD/` with format `hostname_HHMMSS_index.jpg`
+- **Tool Name**: Named `imageFetch` to avoid conflicts with native fetch functions
 
 ## Changelog
 
