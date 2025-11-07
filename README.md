@@ -1,4 +1,4 @@
-# MCP Fetch
+# Deep Fetch
 
 ### _Web fetching that handles what built-in tools can't: images, clean markdown extraction, and organized file management—configured once at the server level, not in every prompt._
 
@@ -78,7 +78,7 @@ Both options work the same - GitHub method is easier, local gives you more contr
 - **Web Content Extraction**: Automatically extracts and formats web content as markdown
 - **Article Title Extraction**: Extracts and displays the title of the article
 - **Image Processing**: Optional processing of images from web pages with optimization
-- **File Saving**: Images are saved to `~/Downloads/mcp-fetch/YYYY-MM-DD/` directory
+- **File Saving**: Images are saved to `~/Downloads/deep-fetch/YYYY-MM-DD/` directory (configurable)
 - **Dual Output**: Both file saving and Base64 encoding for AI display (configurable)
 - **JPEG Optimization**: Automatically optimizes images as JPEG for better performance
 - **GIF Support**: Extracts first frame from animated GIFs
@@ -144,43 +144,91 @@ This prevents duplication and makes configs clearer.
 
 #### Complete Example Configuration
 
+**For Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
 ```json
 {
   "mcpServers": {
     "deep-fetch": {
-      "disabled": false,
       "type": "stdio",
       "command": "npx",
       "args": [
         "-y",
         "github:ain3sh/fetch-tool",
-
-        // Image Processing (CLI args)
-        "--image-output", "both",              // Save to disk AND return base64
-        "--image-layout", "merged",            // Vertically merge multiple images
-        "--image-max-count", "15",             // Fetch up to 15 images per page
-        "--image-quality", "80",               // JPEG quality (1-100)
-        "--image-max-width", "2500",           // Max width in pixels
-        "--image-max-height", "2500",          // Max height in pixels
-        "--image-origin-policy", "cross-origin", // Include CDN images
-        "--image-start-index", "0",            // Start from first image
-
-        // Text Processing (CLI args)
-        "--text-max-length", "25000",          // Max characters per fetch
-        "--text-start-index", "0",             // Start from beginning
-
-        // Security (CLI arg)
-        "--ignore-robots-txt"                  // Bypass robots.txt (use responsibly!)
+        "--text-max-length",
+        "25000",
+        "--image-max-count",
+        "15",
+        "--image-quality",
+        "100",
+        "--image-output",
+        "both",
+        "--image-max-width",
+        "2500",
+        "--image-max-height",
+        "2500",
+        "--image-layout",
+        "merged",
+        "--image-origin-policy",
+        "cross-origin",
+        "--image-start-index",
+        "0",
+        "--text-start-index",
+        "0",
+        "--ignore-robots-txt"
       ],
       "env": {
-        // Security & Infrastructure (env vars only)
-        "DEEP_FETCH_DEFAULT_SAVE_DIR": "/tmp/deep-fetch",    // Where to save images
-        "DEEP_FETCH_TIMEOUT_MS": "15000",                     // 15 second timeout
-        "DEEP_FETCH_MAX_REDIRECTS": "5",                      // Allow 5 redirect hops
-        "DEEP_FETCH_MAX_HTML_BYTES": "5000000",               // 5MB max HTML size
-        "DEEP_FETCH_MAX_IMAGE_BYTES": "10000000",             // 10MB max image size
-        "DEEP_FETCH_DISABLE_SSRF_GUARD": "0"                  // Keep SSRF protection ON
-      }
+        "DEEP_FETCH_DEFAULT_SAVE_DIR": "/tmp/deep-fetch",
+        "DEEP_FETCH_TIMEOUT_MS": "15000",
+        "DEEP_FETCH_MAX_REDIRECTS": "5",
+        "DEEP_FETCH_MAX_HTML_BYTES": "5000000",
+        "DEEP_FETCH_MAX_IMAGE_BYTES": "10000000",
+        "DEEP_FETCH_DISABLE_SSRF_GUARD": "0"
+      },
+      "source": "https://github.com/ain3sh/fetch-tool"
+    }
+  }
+}
+```
+
+**For Claude Code** (`.mcp.json` in your project root):
+
+```json
+{
+  "mcpServers": {
+    "deep-fetch": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "github:ain3sh/fetch-tool",
+        "--text-max-length",
+        "25000",
+        "--image-max-count",
+        "15",
+        "--image-quality",
+        "100",
+        "--image-output",
+        "both",
+        "--image-max-width",
+        "2500",
+        "--image-max-height",
+        "2500",
+        "--image-layout",
+        "merged",
+        "--image-origin-policy",
+        "cross-origin",
+        "--ignore-robots-txt"
+      ],
+      "env": {
+        "DEEP_FETCH_DEFAULT_SAVE_DIR": "/tmp/deep-fetch",
+        "DEEP_FETCH_TIMEOUT_MS": "15000",
+        "DEEP_FETCH_MAX_REDIRECTS": "5",
+        "DEEP_FETCH_MAX_HTML_BYTES": "5000000",
+        "DEEP_FETCH_MAX_IMAGE_BYTES": "10000000",
+        "DEEP_FETCH_DISABLE_SSRF_GUARD": "0"
+      },
+      "source": "https://github.com/ain3sh/fetch-tool"
     }
   }
 }
@@ -330,15 +378,14 @@ The following sections are for those who want to develop or modify the tool.
 ## Prerequisites
 
 - Node.js 18+
-- macOS (for clipboard operations)
-- Claude Desktop (install from https://claude.ai/desktop)
-- tsx (install via `npm install -g tsx`)
+- Claude Desktop or Claude Code (install from https://claude.ai/desktop)
+- Works on Linux, macOS, and Windows (cross-platform)
 
 ## Installation
 
 ```bash
-git clone https://github.com/kazuph/mcp-fetch.git
-cd mcp-fetch
+git clone https://github.com/ain3sh/fetch-tool.git
+cd fetch-tool
 npm install
 npm run build
 ```
@@ -353,37 +400,19 @@ When processing images from web content, the following optimizations are applied
 - Chroma subsampling (4:2:0) for better compression
 - MozJPEG optimization for smaller file sizes
 
-## Configuration
+## Development
 
-1. Make sure Claude Desktop is installed and running.
+After cloning and building locally, you can test the server:
 
-2. Install tsx globally if you haven't:
 ```bash
-npm install -g tsx
-# or
-pnpm add -g tsx
+# Run the server directly
+npm start
+
+# Or with arguments
+node dist/index.js --image-quality 90 --text-max-length 50000
 ```
 
-3. Modify your Claude Desktop config located at:
-`~/Library/Application Support/Claude/claude_desktop_config.json`
-
-You can easily find this through the Claude Desktop menu:
-1. Open Claude Desktop
-2. Click Claude on the Mac menu bar
-3. Click "Settings"
-4. Click "Developer"
-
-Add the following to your MCP client's configuration:
-
-```json
-{
-  "tools": {
-    "imageFetch": {
-      "args": ["tsx", "/path/to/mcp-fetch/index.ts"]
-    }
-  }
-}
-```
+See the [Configuration](#configuration) section above for all available CLI arguments and environment variables.
 
 ## Security Features
 
@@ -400,8 +429,8 @@ Add the following to your MCP client's configuration:
 - **Image Processing**: Uses Sharp for high-performance image optimization
 - **Merging**: Multiple images are merged vertically with size constraints
 - **GIF Handling**: Animated GIFs automatically reduced to first frame
-- **File Organization**: Images saved to `~/Downloads/mcp-fetch/YYYY-MM-DD/` with format `hostname_HHMMSS_index.jpg`
-- **Tool Name**: Named `imageFetch` to avoid conflicts with native fetch functions
+- **File Organization**: Images saved to `~/Downloads/deep-fetch/YYYY-MM-DD/` (configurable via `--default-save-dir`)
+- **Source Code**: Organized in `src/` directory, compiled to `dist/` for distribution
 
 ## Changelog
 
