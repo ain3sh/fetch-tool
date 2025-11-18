@@ -10,8 +10,8 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
-  ListToolsRequestSchema,
   ListResourcesRequestSchema,
+  ListToolsRequestSchema,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { Readability } from "@mozilla/readability";
@@ -82,7 +82,8 @@ interface ServerConfig {
   imageSaveDir: string; // Default directory for saving images
   // Text processing
   textStartIndex: number;
-  textMaxLength: number; // Server default, can be overridden per-request
+  textMaxLength: number; // Server default
+  textRaw: boolean; // Return raw HTML instead of markdown
   // Security
   ignoreRobotsTxt: boolean;
 }
@@ -143,6 +144,9 @@ function parseCliArgs(args: string[]): Partial<ServerConfig> {
         if (next) config.textMaxLength = Number(next);
         i++;
         break;
+      case "--text-raw":
+        config.textRaw = true;
+        break;
       case "--ignore-robots-txt":
         config.ignoreRobotsTxt = true;
         break;
@@ -175,6 +179,7 @@ function loadServerConfig(args: string[]): ServerConfig {
     imageSaveDir: defaultSaveDir,
     textStartIndex: 0,
     textMaxLength: 20000,
+    textRaw: false,
     ignoreRobotsTxt: false,
   };
 
@@ -580,38 +585,37 @@ function extractFilenameFromUrl(url: string): string {
   }
 }
 
-// Simplified schema - only LLM-controllable parameters
-const FetchArgsSchema = z.object({
-  url: z
-    .string()
-    .url()
-    .refine(
-      (val) => {
-        try {
-          const u = new URL(val);
-          return u.protocol === "http:" || u.protocol === "https:";
-        } catch {
-          return false;
-        }
-      },
-      { message: "Only http/https URLs are allowed" }
-    ),
-  images: z
-    .union([
-      z.boolean(),
-      z.object({
-        maxCount: z.number().int().min(0).max(10).optional(),
-        saveDir: z.string().optional(),
-      }),
-    ])
-    .optional(),
-  text: z
-    .object({
-      raw: z.boolean().optional(),
-      maxLength: z.number().int().positive().max(1000000).optional(),
-    })
-    .optional(),
-}).strict();
+// Simplified schema - only 4 LLM-controllable parameters
+const FetchArgsSchema = z
+  .object({
+    url: z
+      .string()
+      .url()
+      .refine(
+        (val) => {
+          try {
+            const u = new URL(val);
+            return u.protocol === "http:" || u.protocol === "https:";
+          } catch {
+            return false;
+          }
+        },
+        { message: "Only http/https URLs are allowed" }
+      ),
+    name: z
+      .string()
+      .optional()
+      .describe("Custom directory name for content storage"),
+    refresh: z
+      .boolean()
+      .optional()
+      .describe("Force re-fetch even if URL is cached"),
+    images: z
+      .boolean()
+      .optional()
+      .describe("Enable image fetching and processing"),
+  })
+  .strict();
 
 // ListToolsRequestSchema and CallToolRequestSchema are imported from SDK
 
@@ -1140,6 +1144,7 @@ console.error("Server started with configuration:", {
   imageLayout: SERVER_CONFIG.imageLayout,
   imageMaxCount: SERVER_CONFIG.imageMaxCount,
   textMaxLength: SERVER_CONFIG.textMaxLength,
+  textRaw: SERVER_CONFIG.textRaw,
   ignoreRobotsTxt: SERVER_CONFIG.ignoreRobotsTxt,
 });
 
@@ -1153,52 +1158,37 @@ server.setRequestHandler(
     const tools = [
       {
         name: "fetch",
-        description: `Deep-fetch: Fetches web content and converts to clean markdown using Mozilla Readability + Turndown. Optionally processes, optimizes, and saves images from the page.
-
-**IMPORTANT PARAMETER USAGE GUIDELINES:**
-
-Most configuration is set at the server level by the user. You should ONLY modify these parameters when:
-- The user EXPLICITLY asks you to change them
-- You have a specific contextual reason (for saveDir only)
+        description: `Deep-fetch: Fetches web content and converts to clean markdown using Mozilla Readability + Turndown. Content is automatically cached and organized into titled directories with frontmatter metadata. Optionally processes, optimizes, and saves images from the page.
 
 **Parameters:**
 
 1. **url** (required, string)
-   - The URL to fetch
+   - Single URL: "https://example.com"
 
-2. **images** (optional, boolean or object)
-   - Set to true to enable image fetching
-   - Or provide an object with:
-     - **maxCount** (number, 0-10): Maximum images to fetch
-       ⚠️ DO NOT modify unless user explicitly specifies a number
-       Server default: ${SERVER_CONFIG.imageMaxCount}
-     - **saveDir** (string): Custom directory to save images
-       ✓ You MAY set this based on context (e.g., project-specific folder)
-       ✗ User can override if they specify a location
+2. **name** (optional, string)
+   - Custom directory name for content storage
+   - Overrides auto-generated name from page title
+   - Use when user specifies a custom name or you have context-specific naming
 
-3. **text** (optional, object)
-   - **raw** (boolean): Return raw HTML instead of markdown
-     ✓ Use when user asks for "raw content" or "original HTML"
-   - **maxLength** (number): Maximum characters to return
-     ⚠️ DO NOT modify unless user explicitly mentions content length
-     Server default: ${SERVER_CONFIG.textMaxLength}
+3. **refresh** (optional, boolean)
+   - Force re-fetch even if URL is cached
+   - Use when user explicitly requests fresh content
 
-**Typical Usage:**
+4. **images** (optional, boolean)
+   - Enable image fetching and processing
+   - Server controls: quality, dimensions, layout, output format
 
-Simple fetch:
-{ "url": "https://example.com" }
+**Common Usage:**
 
-Fetch with images:
-{ "url": "https://example.com", "images": true }
-
-Fetch with custom save location:
-{ "url": "https://example.com", "images": { "saveDir": "/path/to/project/docs" } }
-
-Fetch raw HTML:
-{ "url": "https://example.com", "text": { "raw": true } }
+| Use Case | Call |
+|----------|------|
+| Basic fetch | { "url": "..." } |
+| With images | { "url": "...", "images": true } |
+| Refresh | { "url": "...", "refresh": true } |
+| Custom name | { "url": "...", "name": "my-docs" } |
 
 **Server Configuration:**
-This server is configured with: output=${SERVER_CONFIG.imageOutput}, layout=${SERVER_CONFIG.imageLayout}, maxCount=${SERVER_CONFIG.imageMaxCount}, maxLength=${SERVER_CONFIG.textMaxLength}`,
+output=${SERVER_CONFIG.imageOutput}, layout=${SERVER_CONFIG.imageLayout}, maxCount=${SERVER_CONFIG.imageMaxCount}, maxLength=${SERVER_CONFIG.textMaxLength}, textRaw=${SERVER_CONFIG.textRaw}`,
         inputSchema: zodToJsonSchema(FetchArgsSchema),
       },
     ];
@@ -1232,7 +1222,7 @@ server.setRequestHandler(
         throw new Error(`Invalid arguments: ${parsed.error}`);
       }
 
-      const { url, images, text } = parsed.data;
+      const { url, name: _customName, refresh: _refresh, images } = parsed.data;
 
       // Build fetch options from server config with per-request overrides
       const fetchOptions = {
@@ -1253,7 +1243,7 @@ server.setRequestHandler(
         enableFetchImages: false,
         saveImages: false,
         returnBase64: false,
-        raw: false,
+        raw: SERVER_CONFIG.textRaw,
         saveDir: undefined as string | undefined,
       };
 
@@ -1268,25 +1258,6 @@ server.setRequestHandler(
         fetchOptions.returnBase64 =
           SERVER_CONFIG.imageOutput === "base64" ||
           SERVER_CONFIG.imageOutput === "both";
-
-        if (typeof images === "object") {
-          if (images.maxCount !== undefined) {
-            fetchOptions.imageMaxCount = images.maxCount;
-          }
-          if (images.saveDir !== undefined) {
-            fetchOptions.saveDir = images.saveDir;
-          }
-        }
-      }
-
-      // Apply per-request overrides for text
-      if (text) {
-        if (text.raw !== undefined) {
-          fetchOptions.raw = text.raw;
-        }
-        if (text.maxLength !== undefined) {
-          fetchOptions.maxLength = text.maxLength;
-        }
       }
 
       // Check robots.txt unless disabled in server config
@@ -1438,6 +1409,5 @@ if (process.env.MCP_FETCH_DISABLE_SERVER !== "1") {
     process.exit(1);
   });
 }
-
 
 export { fetchUrl };

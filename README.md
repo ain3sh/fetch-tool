@@ -135,7 +135,16 @@ Or with custom settings:
 
 ### Tool Parameters (LLM-Controlled)
 
-Minimal parameters exposed to LLMs:
+Only 4 parameters exposed to LLMs:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `url` | string | URL to fetch (required) |
+| `name` | string | Custom directory name |
+| `refresh` | boolean | Bypass cache and re-fetch |
+| `images` | boolean | Enable image fetching |
+
+All other settings (image processing, text limits, output modes) are configured at server startup.
 
 ```json
 // Simple fetch
@@ -144,11 +153,11 @@ Minimal parameters exposed to LLMs:
 // With images
 { "url": "https://example.com", "images": true }
 
-// Custom save location
-{ "url": "https://example.com", "images": { "saveDir": "/path/to/project" } }
+// Refresh cached content
+{ "url": "https://example.com", "refresh": true }
 
-// Raw HTML instead of markdown
-{ "url": "https://example.com", "text": { "raw": true } }
+// Custom directory name
+{ "url": "https://example.com", "name": "my-docs" }
 ```
 
 ### Server Configuration (CLI Arguments)
@@ -167,6 +176,7 @@ Set once when configuring the server:
 #### Text Processing
 - `--text-max-length <chars>` - Maximum text length (default: 20000)
 - `--text-start-index <number>` - Starting index for pagination (default: 0)
+- `--text-raw` - Return raw HTML instead of markdown
 
 #### General
 - `--default-save-dir <path>` - Base directory for saved files (default: ~/Downloads/deep-fetch)
