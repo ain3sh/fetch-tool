@@ -778,23 +778,28 @@ function extractFilenameFromUrl(url: string): string {
 // Simplified schema - only LLM-controllable parameters
 const FetchArgsSchema = z.object({
   url: z
-    .string()
-    .url()
+    .union([
+      z.string().url(),
+      z.array(z.string().url()).min(1).max(10),
+    ])
     .refine(
       (val) => {
-        try {
-          const u = new URL(val);
-          return u.protocol === "http:" || u.protocol === "https:";
-        } catch {
-          return false;
-        }
+        const urls = Array.isArray(val) ? val : [val];
+        return urls.every((u) => {
+          try {
+            const parsed = new URL(u);
+            return parsed.protocol === "http:" || parsed.protocol === "https:";
+          } catch {
+            return false;
+          }
+        });
       },
       { message: "Only http/https URLs are allowed" }
     ),
   name: z
     .string()
     .optional()
-    .describe("Custom directory name for content (overrides auto-generated name from title)"),
+    .describe("Custom directory name for content (overrides auto-generated name from title). Only works with single URL."),
   refresh: z
     .boolean()
     .optional()
@@ -1368,12 +1373,14 @@ Most configuration is set at the server level by the user. You should ONLY modif
 
 **Parameters:**
 
-1. **url** (required, string)
-   - The URL to fetch
+1. **url** (required, string or array)
+   - Single URL: "https://example.com"
+   - Multiple URLs: ["https://a.com", "https://b.com"] (max 10, processed in parallel)
 
 2. **name** (optional, string)
    - Custom directory name for content storage
    - Overrides auto-generated name from page title
+   ✓ Only works with single URL
    ✓ Use when user specifies a custom name or you have context-specific naming
 
 3. **refresh** (optional, boolean)
@@ -1416,6 +1423,9 @@ Force refresh cached content:
 Custom directory name:
 { "url": "https://example.com", "name": "my-custom-name" }
 
+Batch fetch multiple URLs (parallel):
+{ "url": ["https://a.com/docs", "https://b.com/guide", "https://c.com/api"] }
+
 **Server Configuration:**
 output=${SERVER_CONFIG.imageOutput}, layout=${SERVER_CONFIG.imageLayout}, maxCount=${SERVER_CONFIG.imageMaxCount}, maxLength=${SERVER_CONFIG.textMaxLength}, cache=${SERVER_CONFIG.cacheEnabled ? "enabled" : "disabled"}`,
         inputSchema: zodToJsonSchema(FetchArgsSchema),
@@ -1451,38 +1461,15 @@ server.setRequestHandler(
         throw new Error(`Invalid arguments: ${parsed.error}`);
       }
 
-      const { url, name: customName, refresh, images, text } = parsed.data;
+      const { url: urlInput, name: customName, refresh, images, text } = parsed.data;
 
-      // Check cache if enabled and not forcing refresh
-      if (SERVER_CONFIG.cacheEnabled && !refresh) {
-        const cached = getCacheEntry(url);
-        if (cached) {
-          // Return cached content info
-          const contentFilePath = path.join(cached.contentPath, "CONTENT.md");
-          try {
-            const cachedContent = await fs.readFile(contentFilePath, "utf-8");
+      // Normalize to array for unified processing
+      const urls = Array.isArray(urlInput) ? urlInput : [urlInput];
+      const isBatch = urls.length > 1;
 
-            const responseContent: MCPResponseContent[] = [
-              {
-                type: "text",
-                text: `Contents of ${url} (cached): ${cached.title}\n\n${cachedContent}\n\n⊙ Served from cache (fetched: ${cached.fetched}). Use refresh:true to re-fetch.`,
-              },
-            ];
-
-            // Include image count info
-            if (cached.imageCount > 0) {
-              responseContent.push({
-                type: "text",
-                text: `📁 ${cached.imageCount} images available in: ${cached.contentPath}/images/`,
-              });
-            }
-
-            return { content: responseContent };
-          } catch {
-            // Cache entry exists but file missing, continue to fetch
-            console.warn(`Cache entry exists but content file missing for ${url}`);
-          }
-        }
+      // Validate: --name only works with single URL
+      if (customName && isBatch) {
+        throw new Error("The 'name' parameter only works with a single URL");
       }
 
       // Build fetch options from server config with per-request overrides
@@ -1540,115 +1527,214 @@ server.setRequestHandler(
         }
       }
 
-      // Check robots.txt unless disabled in server config
-      if (!SERVER_CONFIG.ignoreRobotsTxt) {
-        await checkRobotsTxt(url, DEFAULT_USER_AGENT_AUTONOMOUS);
-      }
+      // Helper function to process a single URL
+      const processSingleUrl = async (url: string, dirName?: string): Promise<{
+        success: boolean;
+        url: string;
+        title?: string;
+        contentPath?: string;
+        imageCount?: number;
+        error?: string;
+        responseContent?: MCPResponseContent[];
+      }> => {
+        try {
+          // Check cache if enabled and not forcing refresh
+          if (SERVER_CONFIG.cacheEnabled && !refresh) {
+            const cached = getCacheEntry(url);
+            if (cached) {
+              const contentFilePath = path.join(cached.contentPath, "CONTENT.md");
+              try {
+                const cachedContent = await fs.readFile(contentFilePath, "utf-8");
+                return {
+                  success: true,
+                  url,
+                  title: cached.title,
+                  contentPath: cached.contentPath,
+                  imageCount: cached.imageCount,
+                  responseContent: [
+                    {
+                      type: "text",
+                      text: `Contents of ${url} (cached): ${cached.title}\n\n${cachedContent}\n\n⊙ Served from cache (fetched: ${cached.fetched}). Use refresh:true to re-fetch.`,
+                    },
+                    ...(cached.imageCount > 0 ? [{
+                      type: "text" as const,
+                      text: `📁 ${cached.imageCount} images available in: ${cached.contentPath}/images/`,
+                    }] : []),
+                  ],
+                };
+              } catch {
+                console.warn(`Cache entry exists but content file missing for ${url}`);
+              }
+            }
+          }
 
-      const {
-        content,
-        images: processedImages,
-        remainingContent,
-        remainingImages,
-        title,
-      } = await fetchUrl(
-        url,
-        DEFAULT_USER_AGENT_AUTONOMOUS,
-        fetchOptions.raw,
-        fetchOptions
-      );
+          // Check robots.txt unless disabled in server config
+          if (!SERVER_CONFIG.ignoreRobotsTxt) {
+            await checkRobotsTxt(url, DEFAULT_USER_AGENT_AUTONOMOUS);
+          }
 
-      let finalContent = content.slice(
-        fetchOptions.startIndex,
-        fetchOptions.startIndex + fetchOptions.maxLength
-      );
+          const {
+            content,
+            images: processedImages,
+            remainingContent,
+            remainingImages,
+            title,
+          } = await fetchUrl(
+            url,
+            DEFAULT_USER_AGENT_AUTONOMOUS,
+            fetchOptions.raw,
+            fetchOptions
+          );
 
-      // Add pagination info
-      const remainingInfo = [];
-      if (remainingContent > 0) {
-        remainingInfo.push(`${remainingContent} characters of text remaining`);
-      }
-      if (remainingImages > 0) {
-        remainingInfo.push(
-          `${remainingImages} more images available (use server config to change pagination)`
-        );
-      }
+          let finalContent = content.slice(
+            fetchOptions.startIndex,
+            fetchOptions.startIndex + fetchOptions.maxLength
+          );
 
-      if (remainingInfo.length > 0) {
-        finalContent += `\n\n<e>Content truncated. ${remainingInfo.join(", ")}.</e>`;
-      }
+          // Add pagination info
+          const remainingInfo = [];
+          if (remainingContent > 0) {
+            remainingInfo.push(`${remainingContent} characters of text remaining`);
+          }
+          if (remainingImages > 0) {
+            remainingInfo.push(
+              `${remainingImages} more images available (use server config to change pagination)`
+            );
+          }
 
-      // Create organized content directory (curator-cli style)
-      const pageTitle = title || "Untitled";
-      const dirname = customName || sanitizeDirname(pageTitle, url);
-      const contentPath = path.join(SERVER_CONFIG.contentDir, "content", dirname);
-      const contentFilePath = path.join(contentPath, "CONTENT.md");
-      const imagesPath = path.join(contentPath, "images");
+          if (remainingInfo.length > 0) {
+            finalContent += `\n\n<e>Content truncated. ${remainingInfo.join(", ")}.</e>`;
+          }
 
-      // Ensure directories exist
-      await fs.mkdir(contentPath, { recursive: true });
-      if (processedImages.length > 0) {
-        await fs.mkdir(imagesPath, { recursive: true });
-      }
+          // Create organized content directory (curator-cli style)
+          const pageTitle = title || "Untitled";
+          const dirname = dirName || sanitizeDirname(pageTitle, url);
+          const contentPath = path.join(SERVER_CONFIG.contentDir, "content", dirname);
+          const contentFilePath = path.join(contentPath, "CONTENT.md");
+          const imagesPath = path.join(contentPath, "images");
 
-      // Save markdown with frontmatter
-      const fetchedTimestamp = new Date().toISOString();
-      await writeMarkdownWithFrontmatter(contentFilePath, finalContent, {
-        url,
-        title: pageTitle,
-        fetched: fetchedTimestamp,
-      });
+          // Ensure directories exist
+          await fs.mkdir(contentPath, { recursive: true });
+          if (processedImages.length > 0) {
+            await fs.mkdir(imagesPath, { recursive: true });
+          }
 
-      // Update cache
-      if (SERVER_CONFIG.cacheEnabled) {
-        await setCacheEntry(url, {
-          directory: dirname,
-          title: pageTitle,
-          fetched: fetchedTimestamp,
-          contentPath,
-          contentHash: generateContentHash(finalContent),
-          imageCount: processedImages.length,
-          charCount: finalContent.length,
-        });
-      }
-
-      // Build MCP response
-      const responseContent: MCPResponseContent[] = [
-        {
-          type: "text",
-          text: `Contents of ${url}: ${pageTitle}\n\n${finalContent}`,
-        },
-      ];
-
-      // Add images if base64 data exists
-      for (const image of processedImages) {
-        if (image.data) {
-          responseContent.push({
-            type: "image",
-            mimeType: image.mimeType,
-            data: image.data,
+          // Save markdown with frontmatter
+          const fetchedTimestamp = new Date().toISOString();
+          await writeMarkdownWithFrontmatter(contentFilePath, finalContent, {
+            url,
+            title: pageTitle,
+            fetched: fetchedTimestamp,
           });
+
+          // Update cache
+          if (SERVER_CONFIG.cacheEnabled) {
+            await setCacheEntry(url, {
+              directory: dirname,
+              title: pageTitle,
+              fetched: fetchedTimestamp,
+              contentPath,
+              contentHash: generateContentHash(finalContent),
+              imageCount: processedImages.length,
+              charCount: finalContent.length,
+            });
+          }
+
+          // Build response content
+          const responseContent: MCPResponseContent[] = [
+            {
+              type: "text",
+              text: `Contents of ${url}: ${pageTitle}\n\n${finalContent}`,
+            },
+          ];
+
+          // Add images if base64 data exists
+          for (const image of processedImages) {
+            if (image.data) {
+              responseContent.push({
+                type: "image",
+                mimeType: image.mimeType,
+                data: image.data,
+              });
+            }
+          }
+
+          // Add file save info
+          const savedFiles = processedImages.filter((img) => img.filePath);
+          const fileInfoParts = [`📁 Content saved to: ${contentPath}`];
+
+          if (savedFiles.length > 0) {
+            fileInfoParts.push(
+              ...savedFiles.map((img, index) => `Image ${index + 1}: ${img.filePath}`)
+            );
+          }
+
+          responseContent.push({
+            type: "text",
+            text: fileInfoParts.join("\n"),
+          });
+
+          return {
+            success: true,
+            url,
+            title: pageTitle,
+            contentPath,
+            imageCount: processedImages.length,
+            responseContent,
+          };
+        } catch (error) {
+          return {
+            success: false,
+            url,
+            error: error instanceof Error ? error.message : String(error),
+          };
         }
-      }
-
-      // Add file save info
-      const savedFiles = processedImages.filter((img) => img.filePath);
-      const fileInfoParts = [`📁 Content saved to: ${contentPath}`];
-
-      if (savedFiles.length > 0) {
-        fileInfoParts.push(
-          ...savedFiles.map((img, index) => `Image ${index + 1}: ${img.filePath}`)
-        );
-      }
-
-      responseContent.push({
-        type: "text",
-        text: fileInfoParts.join("\n"),
-      });
-
-      return {
-        content: responseContent,
       };
+
+      // Process single URL or batch
+      if (!isBatch) {
+        const result = await processSingleUrl(urls[0], customName);
+        if (result.responseContent) {
+          return { content: result.responseContent };
+        }
+        throw new Error(result.error || "Unknown error");
+      } else {
+        // Batch processing: fetch all URLs in parallel
+        const results = await Promise.all(
+          urls.map((url) => processSingleUrl(url))
+        );
+
+        // Build summary response
+        const successful = results.filter((r) => r.success);
+        const failed = results.filter((r) => !r.success);
+
+        let summaryText = `## Batch Fetch Complete\n\n`;
+        summaryText += `**Processed:** ${urls.length} URLs\n`;
+        summaryText += `**Successful:** ${successful.length}\n`;
+        if (failed.length > 0) {
+          summaryText += `**Failed:** ${failed.length}\n`;
+        }
+        summaryText += `\n### Results:\n`;
+
+        results.forEach((r, i) => {
+          if (r.success) {
+            const cached = r.responseContent?.[0]?.type === "text" &&
+              (r.responseContent[0] as { text: string }).text.includes("(cached)");
+            summaryText += `${i + 1}. ✓ ${r.title || "Untitled"} → ${r.contentPath}${cached ? " (cached)" : ""}\n`;
+          } else {
+            summaryText += `${i + 1}. ✗ ${r.url}: ${r.error}\n`;
+          }
+        });
+
+        const totalImages = successful.reduce((sum, r) => sum + (r.imageCount || 0), 0);
+        if (totalImages > 0) {
+          summaryText += `\n**Total images processed:** ${totalImages}`;
+        }
+
+        return {
+          content: [{ type: "text", text: summaryText }],
+        };
+      }
     } catch (error) {
       return {
         content: [
