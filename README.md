@@ -153,10 +153,12 @@ Configure once when starting the server:
 ### Environment Variables
 
 ```bash
-DEEP_FETCH_TIMEOUT_MS=12000        # Request timeout
-DEEP_FETCH_MAX_REDIRECTS=3         # Max redirects
+DEEP_FETCH_TIMEOUT_MS=12000        # Request timeout in milliseconds
+DEEP_FETCH_MAX_REDIRECTS=3         # Max HTTP redirects to follow
 DEEP_FETCH_MAX_HTML_BYTES=2000000  # Max HTML size (2MB)
 DEEP_FETCH_MAX_IMAGE_BYTES=10000000 # Max image size (10MB)
+DEEP_FETCH_DEFAULT_SAVE_DIR=/path  # Default image save directory
+DEEP_FETCH_DISABLE_SSRF_GUARD=1    # Disable SSRF protection (use with caution)
 ```
 
 ## Tool Parameters
