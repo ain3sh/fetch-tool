@@ -107,7 +107,7 @@ Configure once when starting the server:
 
 #### Text Processing
 - `--text-max-length <chars>` - Max characters (default: 20000)
-- `--text-raw` - Return raw HTML instead of markdown
+- `--text-raw` - Return raw HTML instead of Markdown
 
 #### Storage
 - `--content-dir <path>` - Content directory (default: ~/fetch-site)
