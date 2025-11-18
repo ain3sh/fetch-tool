@@ -12,8 +12,8 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
-  ListToolsRequestSchema,
   ListResourcesRequestSchema,
+  ListToolsRequestSchema,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { Readability } from "@mozilla/readability";
@@ -238,15 +238,15 @@ async function writeMarkdownWithFrontmatter(
 // Security hardening
 // --------------------
 // Defaults (can be overridden by env vars)
-const FETCH_TIMEOUT_MS = Number(process.env.DEEP_FETCH_TIMEOUT_MS || 12000);
-const MAX_REDIRECTS = Number(process.env.DEEP_FETCH_MAX_REDIRECTS || 3);
+const FETCH_TIMEOUT_MS = Number(process.env.FETCH_SITE_TIMEOUT_MS || 12000);
+const MAX_REDIRECTS = Number(process.env.FETCH_SITE_MAX_REDIRECTS || 3);
 const MAX_HTML_BYTES = Number(
-  process.env.DEEP_FETCH_MAX_HTML_BYTES || 2_000_000
+  process.env.FETCH_SITE_MAX_HTML_BYTES || 2_000_000
 ); // 2MB
 const MAX_IMAGE_BYTES = Number(
-  process.env.DEEP_FETCH_MAX_IMAGE_BYTES || 10_000_000
+  process.env.FETCH_SITE_MAX_IMAGE_BYTES || 10_000_000
 ); // 10MB
-const DISABLE_SSRF_GUARD = process.env.DEEP_FETCH_DISABLE_SSRF_GUARD === "1";
+const DISABLE_SSRF_GUARD = process.env.FETCH_SITE_DISABLE_SSRF_GUARD === "1";
 
 // --------------------
 // Server-level configuration
@@ -264,7 +264,8 @@ interface ServerConfig {
   imageSaveDir: string; // Default directory for saving images
   // Text processing
   textStartIndex: number;
-  textMaxLength: number; // Server default, can be overridden per-request
+  textMaxLength: number; // Server default
+  textRaw: boolean; // Return raw HTML instead of markdown
   // Security
   ignoreRobotsTxt: boolean;
   // Content organization (from curator-cli)
@@ -328,6 +329,9 @@ function parseCliArgs(args: string[]): Partial<ServerConfig> {
         if (next) config.textMaxLength = Number(next);
         i++;
         break;
+      case "--text-raw":
+        config.textRaw = true;
+        break;
       case "--ignore-robots-txt":
         config.ignoreRobotsTxt = true;
         break;
@@ -356,8 +360,8 @@ function parseCliArgs(args: string[]): Partial<ServerConfig> {
 function loadServerConfig(args: string[]): ServerConfig {
   // Hard-coded defaults
   const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
-  const defaultSaveDir = path.join(homeDir, "Downloads", "deep-fetch");
-  const defaultContentDir = path.join(homeDir, "deep-fetch");
+  const defaultSaveDir = path.join(homeDir, "Downloads", "fetch-site");
+  const defaultContentDir = path.join(homeDir, "fetch-site");
 
   const defaults: ServerConfig = {
     imageMaxWidth: 1000,
@@ -371,6 +375,7 @@ function loadServerConfig(args: string[]): ServerConfig {
     imageSaveDir: defaultSaveDir,
     textStartIndex: 0,
     textMaxLength: 20000,
+    textRaw: false,
     ignoreRobotsTxt: false,
     contentDir: defaultContentDir,
     cacheEnabled: true,
@@ -379,7 +384,7 @@ function loadServerConfig(args: string[]): ServerConfig {
   // Env var overrides (only low-level security/network settings)
   // Image/text processing settings use CLI args only
   const envConfig: Partial<ServerConfig> = {
-    imageSaveDir: process.env.DEEP_FETCH_DEFAULT_SAVE_DIR || undefined,
+    imageSaveDir: process.env.FETCH_SITE_DEFAULT_SAVE_DIR || undefined,
   };
 
   // CLI arg overrides
@@ -810,20 +815,9 @@ const FetchArgsSchema = z
       .optional()
       .describe("Force re-fetch even if URL is cached"),
     images: z
-      .union([
-        z.boolean(),
-        z.object({
-          maxCount: z.number().int().min(0).max(10).optional(),
-          saveDir: z.string().optional(),
-        }),
-      ])
-      .optional(),
-    text: z
-      .object({
-        raw: z.boolean().optional(),
-        maxLength: z.number().int().positive().max(1000000).optional(),
-      })
-      .optional(),
+      .boolean()
+      .optional()
+      .describe("Enable image fetching and processing"),
   })
   .strict();
 
@@ -1331,7 +1325,7 @@ const SERVER_CONFIG = loadServerConfig(args);
 // Server setup
 const server = new Server(
   {
-    name: "deep-fetch",
+    name: "fetch-site",
     version: "2.0.0",
   },
   {
@@ -1354,7 +1348,7 @@ console.error("Server started with configuration:", {
   imageLayout: SERVER_CONFIG.imageLayout,
   imageMaxCount: SERVER_CONFIG.imageMaxCount,
   textMaxLength: SERVER_CONFIG.textMaxLength,
-  ignoreRobotsTxt: SERVER_CONFIG.ignoreRobotsTxt,
+  textRaw: SERVER_CONFIG.textRaw,
   contentDir: SERVER_CONFIG.contentDir,
   cacheEnabled: SERVER_CONFIG.cacheEnabled,
 });
@@ -1369,13 +1363,7 @@ server.setRequestHandler(
     const tools = [
       {
         name: "fetch",
-        description: `Deep-fetch: Fetches web content and converts to clean markdown using Mozilla Readability + Turndown. Content is automatically cached and organized into titled directories with frontmatter metadata. Optionally processes, optimizes, and saves images from the page.
-
-**IMPORTANT PARAMETER USAGE GUIDELINES:**
-
-Most configuration is set at the server level by the user. You should ONLY modify these parameters when:
-- The user EXPLICITLY asks you to change them
-- You have a specific contextual reason (for saveDir/name only)
+        description: `Fetch-site: Fetches web content and converts to clean markdown using Mozilla Readability + Turndown. Content is automatically cached and organized into titled directories with frontmatter metadata. Optionally processes, optimizes, and saves images from the page.
 
 **Parameters:**
 
@@ -1386,54 +1374,27 @@ Most configuration is set at the server level by the user. You should ONLY modif
 2. **name** (optional, string)
    - Custom directory name for content storage
    - Overrides auto-generated name from page title
-   ✓ Only works with single URL
-   ✓ Use when user specifies a custom name or you have context-specific naming
+   - Only works with single URL
 
 3. **refresh** (optional, boolean)
-   - Force re-fetch even if URL is already cached
-   ✓ Use when user asks for "latest", "updated", or "fresh" content
+   - Force re-fetch even if URL is cached
+   - Use when user explicitly requests fresh content
 
-4. **images** (optional, boolean or object)
-   - Set to true to enable image fetching
-   - Or provide an object with:
-     - **maxCount** (number, 0-10): Maximum images to fetch
-       ⚠️ DO NOT modify unless user explicitly specifies a number
-       Server default: ${SERVER_CONFIG.imageMaxCount}
-     - **saveDir** (string): Custom directory to save images
-       ✓ You MAY set this based on context (e.g., project-specific folder)
+4. **images** (optional, boolean)
+   - Enable image fetching and processing
+   - Server controls: quality, dimensions, layout, output format
 
-5. **text** (optional, object)
-   - **raw** (boolean): Return raw HTML instead of markdown
-     ✓ Use when user asks for "raw content" or "original HTML"
-   - **maxLength** (number): Maximum characters to return
-     ⚠️ DO NOT modify unless user explicitly mentions content length
-     Server default: ${SERVER_CONFIG.textMaxLength}
+**Common Usage:**
 
-**Content Organization:**
-- Content is saved to: ${SERVER_CONFIG.contentDir}/content/<page-title>/
-- Each URL gets a directory containing: CONTENT.md (with frontmatter) + images/
-- Automatic caching prevents duplicate fetches (use refresh:true to override)
-- Frontmatter includes: url, title, description, fetched timestamp
-
-**Typical Usage:**
-
-Simple fetch (auto-cached):
-{ "url": "https://example.com" }
-
-Fetch with images:
-{ "url": "https://example.com", "images": true }
-
-Force refresh cached content:
-{ "url": "https://example.com", "refresh": true }
-
-Custom directory name:
-{ "url": "https://example.com", "name": "my-custom-name" }
-
-Batch fetch multiple URLs (parallel):
-{ "url": ["https://a.com/docs", "https://b.com/guide", "https://c.com/api"] }
+| Use Case | Call |
+|----------|------|
+| Basic fetch | { "url": "..." } |
+| With images | { "url": "...", "images": true } |
+| Batch | { "url": ["...", "...", "..."] } |
+| Refresh | { "url": "...", "refresh": true } |
 
 **Server Configuration:**
-output=${SERVER_CONFIG.imageOutput}, layout=${SERVER_CONFIG.imageLayout}, maxCount=${SERVER_CONFIG.imageMaxCount}, maxLength=${SERVER_CONFIG.textMaxLength}, cache=${SERVER_CONFIG.cacheEnabled ? "enabled" : "disabled"}`,
+output=${SERVER_CONFIG.imageOutput}, layout=${SERVER_CONFIG.imageLayout}, maxCount=${SERVER_CONFIG.imageMaxCount}, maxLength=${SERVER_CONFIG.textMaxLength}, textRaw=${SERVER_CONFIG.textRaw}`,
         inputSchema: zodToJsonSchema(FetchArgsSchema),
       },
     ];
@@ -1467,13 +1428,7 @@ server.setRequestHandler(
         throw new Error(`Invalid arguments: ${parsed.error}`);
       }
 
-      const {
-        url: urlInput,
-        name: customName,
-        refresh,
-        images,
-        text,
-      } = parsed.data;
+      const { url: urlInput, name: customName, refresh, images } = parsed.data;
 
       // Normalize to array for unified processing
       const urls = Array.isArray(urlInput) ? urlInput : [urlInput];
@@ -1508,7 +1463,7 @@ server.setRequestHandler(
         enableFetchImages: false,
         saveImages: false,
         returnBase64: false,
-        raw: false,
+        raw: SERVER_CONFIG.textRaw,
         saveDir: undefined as string | undefined,
       };
 
@@ -1523,25 +1478,6 @@ server.setRequestHandler(
         fetchOptions.returnBase64 =
           SERVER_CONFIG.imageOutput === "base64" ||
           SERVER_CONFIG.imageOutput === "both";
-
-        if (typeof images === "object") {
-          if (images.maxCount !== undefined) {
-            fetchOptions.imageMaxCount = images.maxCount;
-          }
-          if (images.saveDir !== undefined) {
-            fetchOptions.saveDir = images.saveDir;
-          }
-        }
-      }
-
-      // Apply per-request overrides for text
-      if (text) {
-        if (text.raw !== undefined) {
-          fetchOptions.raw = text.raw;
-        }
-        if (text.maxLength !== undefined) {
-          fetchOptions.maxLength = text.maxLength;
-        }
       }
 
       // Helper function to process a single URL

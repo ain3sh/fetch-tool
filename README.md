@@ -1,4 +1,4 @@
-# Deep Fetch
+# Fetch Site
 
 An MCP server for fetching web content with intelligent caching, clean markdown extraction, and image processing. Designed for AI agents that need web content without the limitations of built-in fetch tools.
 
@@ -67,7 +67,7 @@ Or add to your MCP configuration:
 Content is automatically organized:
 
 ```text
-~/deep-fetch/
+~/fetch-site/
 ├── manifest.json                    # Cache manifest
 └── content/
     └── understanding-react-hooks/   # Auto-named from page title
@@ -107,10 +107,11 @@ Configure once when starting the server:
 
 #### Text Processing
 - `--text-max-length <chars>` - Max characters (default: 20000)
+- `--text-raw` - Return raw HTML instead of markdown
 
 #### Storage
-- `--content-dir <path>` - Content directory (default: ~/deep-fetch)
-- `--default-save-dir <path>` - Image save directory (default: ~/Downloads/deep-fetch)
+- `--content-dir <path>` - Content directory (default: ~/fetch-site)
+- `--default-save-dir <path>` - Image save directory (default: ~/Downloads/fetch-site)
 
 #### Caching
 - `--cache-enabled` - Enable caching (default)
@@ -153,28 +154,26 @@ Configure once when starting the server:
 ### Environment Variables
 
 ```bash
-DEEP_FETCH_TIMEOUT_MS=12000        # Request timeout in milliseconds
-DEEP_FETCH_MAX_REDIRECTS=3         # Max HTTP redirects to follow
-DEEP_FETCH_MAX_HTML_BYTES=2000000  # Max HTML size (2MB)
-DEEP_FETCH_MAX_IMAGE_BYTES=10000000 # Max image size (10MB)
-DEEP_FETCH_DEFAULT_SAVE_DIR=/path  # Default image save directory
-DEEP_FETCH_DISABLE_SSRF_GUARD=1    # Disable SSRF protection (use with caution)
+FETCH_SITE_TIMEOUT_MS=12000        # Request timeout in milliseconds
+FETCH_SITE_MAX_REDIRECTS=3         # Max HTTP redirects to follow
+FETCH_SITE_MAX_HTML_BYTES=2000000  # Max HTML size (2MB)
+FETCH_SITE_MAX_IMAGE_BYTES=10000000 # Max image size (10MB)
+FETCH_SITE_DEFAULT_SAVE_DIR=/path  # Default image save directory
+FETCH_SITE_DISABLE_SSRF_GUARD=1    # Disable SSRF protection (use with caution)
 ```
 
 ## Tool Parameters
 
-Parameters available to AI agents:
+Only 4 parameters exposed to AI agents:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `url` | string \| string[] | URL(s) to fetch (max 10 for batch) |
 | `name` | string | Custom directory name (single URL only) |
 | `refresh` | boolean | Bypass cache and re-fetch |
-| `images` | boolean \| object | Enable image fetching |
-| `images.maxCount` | number | Override server's image count |
-| `images.saveDir` | string | Custom save directory |
-| `text.raw` | boolean | Return raw HTML instead of markdown |
-| `text.maxLength` | number | Override server's max length |
+| `images` | boolean | Enable image fetching |
+
+All other settings (image processing, text limits, output modes) are configured at server startup via CLI args.
 
 ## How It Works
 
