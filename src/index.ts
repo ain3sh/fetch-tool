@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
+import crypto from "node:crypto";
 import dns from "node:dns";
 import { promises as fs } from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { URL } from "node:url";
@@ -53,6 +55,186 @@ let serverInstance: Server;
 let serverConnected = false;
 
 // --------------------
+// Cache System (from curator-cli)
+// --------------------
+interface CacheEntry {
+  directory: string; // Sanitized directory name
+  title: string; // Page title
+  fetched: string; // ISO timestamp
+  contentPath: string; // Absolute path to content directory
+  contentHash: string; // SHA256 hash of markdown (first 8 chars)
+  imageCount: number; // Number of images processed
+  charCount: number; // Character count of content
+}
+
+interface CacheManifest {
+  version: string;
+  entries: Record<string, CacheEntry>;
+}
+
+// Global cache manifest
+let cacheManifest: CacheManifest = { version: "3.0", entries: {} };
+let cacheManifestPath: string = "";
+
+/**
+ * Sanitize title/URL into a valid directory name (from curator-cli)
+ */
+function sanitizeDirname(title: string, url: string): string {
+  // Try to use title first, fallback to URL
+  let dirname = title || extractDirnameFromUrl(url);
+
+  // Convert to lowercase and replace spaces with hyphens
+  dirname = dirname
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-") // Spaces to hyphens
+    .replace(/[^a-z0-9-]/g, "") // Remove special chars
+    .replace(/-+/g, "-") // Multiple hyphens to single
+    .replace(/^-|-$/g, ""); // Remove leading/trailing hyphens
+
+  // Ensure reasonable length
+  if (dirname.length > 100) {
+    dirname = dirname.substring(0, 100);
+  }
+
+  // Fallback if empty
+  if (!dirname) {
+    dirname = `untitled-${Date.now()}`;
+  }
+
+  return dirname;
+}
+
+/**
+ * Extract directory name from URL path
+ */
+function extractDirnameFromUrl(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    const pathname = urlObj.pathname.replace(/^\/|\/$/g, "");
+
+    if (pathname) {
+      const parts = pathname.split("/");
+      const lastPart = parts[parts.length - 1].replace(/\.[^.]+$/, ""); // Remove extension
+      return lastPart || urlObj.hostname;
+    }
+
+    return urlObj.hostname;
+  } catch {
+    return "untitled";
+  }
+}
+
+/**
+ * Generate content hash (first 8 chars of SHA256)
+ */
+function generateContentHash(content: string): string {
+  return crypto
+    .createHash("sha256")
+    .update(content)
+    .digest("hex")
+    .substring(0, 8);
+}
+
+/**
+ * Load cache manifest from disk
+ */
+async function loadCacheManifest(manifestPath: string): Promise<void> {
+  cacheManifestPath = manifestPath;
+  try {
+    const data = await fs.readFile(manifestPath, "utf-8");
+    cacheManifest = JSON.parse(data);
+  } catch (error) {
+    if (isNodeErrorWithCode(error) && error.code === "ENOENT") {
+      // No manifest yet, start fresh
+      cacheManifest = { version: "3.0", entries: {} };
+    } else {
+      console.warn("Failed to load cache manifest:", error);
+      cacheManifest = { version: "3.0", entries: {} };
+    }
+  }
+}
+
+/**
+ * Save cache manifest to disk
+ */
+async function saveCacheManifest(): Promise<void> {
+  if (!cacheManifestPath) return;
+  try {
+    const dir = path.dirname(cacheManifestPath);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(
+      cacheManifestPath,
+      JSON.stringify(cacheManifest, null, 2)
+    );
+  } catch (error) {
+    console.warn("Failed to save cache manifest:", error);
+  }
+}
+
+/**
+ * Check if URL is in cache
+ */
+function getCacheEntry(url: string): CacheEntry | undefined {
+  return cacheManifest.entries[url];
+}
+
+/**
+ * Add/update cache entry
+ */
+async function setCacheEntry(url: string, entry: CacheEntry): Promise<void> {
+  cacheManifest.entries[url] = entry;
+  await saveCacheManifest();
+}
+
+/**
+ * Generate YAML frontmatter for markdown (from curator-cli)
+ */
+function generateFrontmatter(metadata: {
+  url: string;
+  title: string;
+  description?: string;
+  fetched: string;
+  cached?: boolean;
+}): string {
+  const lines = ["---", `url: ${metadata.url}`, `title: ${metadata.title}`];
+
+  if (metadata.description) {
+    lines.push(`description: ${metadata.description}`);
+  }
+
+  lines.push(`fetched: ${metadata.fetched}`);
+
+  if (metadata.cached) {
+    lines.push(`cached: true`);
+  }
+
+  lines.push("---", "");
+
+  return lines.join("\n");
+}
+
+/**
+ * Write markdown file with frontmatter
+ */
+async function writeMarkdownWithFrontmatter(
+  outputPath: string,
+  content: string,
+  metadata: {
+    url: string;
+    title: string;
+    description?: string;
+    fetched: string;
+  }
+): Promise<void> {
+  const dir = path.dirname(outputPath);
+  await fs.mkdir(dir, { recursive: true });
+
+  const frontmatter = generateFrontmatter(metadata);
+  await fs.writeFile(outputPath, frontmatter + content, "utf-8");
+}
+
+// --------------------
 // Security hardening
 // --------------------
 // Defaults (can be overridden by env vars)
@@ -86,6 +268,9 @@ interface ServerConfig {
   textRaw: boolean; // Return raw HTML instead of markdown
   // Security
   ignoreRobotsTxt: boolean;
+  // Content organization (from curator-cli)
+  contentDir: string; // Root directory for organized content
+  cacheEnabled: boolean; // Enable URL caching
 }
 
 /**
@@ -154,6 +339,16 @@ function parseCliArgs(args: string[]): Partial<ServerConfig> {
         if (next) config.imageSaveDir = next;
         i++;
         break;
+      case "--content-dir":
+        if (next) config.contentDir = next;
+        i++;
+        break;
+      case "--cache-enabled":
+        config.cacheEnabled = true;
+        break;
+      case "--no-cache":
+        config.cacheEnabled = false;
+        break;
     }
   }
   return config;
@@ -164,8 +359,9 @@ function parseCliArgs(args: string[]): Partial<ServerConfig> {
  */
 function loadServerConfig(args: string[]): ServerConfig {
   // Hard-coded defaults
-  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
-  const defaultSaveDir = path.join(homeDir, "Downloads", "deep-fetch");
+  const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  const defaultSaveDir = path.join(homeDir, "Downloads", "fetch-site");
+  const defaultContentDir = path.join(homeDir, "fetch-site");
 
   const defaults: ServerConfig = {
     imageMaxWidth: 1000,
@@ -181,6 +377,8 @@ function loadServerConfig(args: string[]): ServerConfig {
     textMaxLength: 20000,
     textRaw: false,
     ignoreRobotsTxt: false,
+    contentDir: defaultContentDir,
+    cacheEnabled: true,
   };
 
   // Env var overrides (only low-level security/network settings)
@@ -585,27 +783,33 @@ function extractFilenameFromUrl(url: string): string {
   }
 }
 
-// Simplified schema - only 4 LLM-controllable parameters
+// Simplified schema - only LLM-controllable parameters
 const FetchArgsSchema = z
   .object({
     url: z
-      .string()
-      .url()
+      .union([z.string().url(), z.array(z.string().url()).min(1).max(10)])
       .refine(
         (val) => {
-          try {
-            const u = new URL(val);
-            return u.protocol === "http:" || u.protocol === "https:";
-          } catch {
-            return false;
-          }
+          const urls = Array.isArray(val) ? val : [val];
+          return urls.every((u) => {
+            try {
+              const parsed = new URL(u);
+              return (
+                parsed.protocol === "http:" || parsed.protocol === "https:"
+              );
+            } catch {
+              return false;
+            }
+          });
         },
         { message: "Only http/https URLs are allowed" }
       ),
     name: z
       .string()
       .optional()
-      .describe("Custom directory name for content storage"),
+      .describe(
+        "Custom directory name for content (overrides auto-generated name from title). Only works with single URL."
+      ),
     refresh: z
       .boolean()
       .optional()
@@ -1121,7 +1325,7 @@ const SERVER_CONFIG = loadServerConfig(args);
 // Server setup
 const server = new Server(
   {
-    name: "deep-fetch",
+    name: "fetch-site",
     version: "2.0.0",
   },
   {
@@ -1145,7 +1349,8 @@ console.error("Server started with configuration:", {
   imageMaxCount: SERVER_CONFIG.imageMaxCount,
   textMaxLength: SERVER_CONFIG.textMaxLength,
   textRaw: SERVER_CONFIG.textRaw,
-  ignoreRobotsTxt: SERVER_CONFIG.ignoreRobotsTxt,
+  contentDir: SERVER_CONFIG.contentDir,
+  cacheEnabled: SERVER_CONFIG.cacheEnabled,
 });
 
 interface RequestHandlerExtra {
@@ -1158,17 +1363,18 @@ server.setRequestHandler(
     const tools = [
       {
         name: "fetch",
-        description: `Deep-fetch: Fetches web content and converts to clean markdown using Mozilla Readability + Turndown. Content is automatically cached and organized into titled directories with frontmatter metadata. Optionally processes, optimizes, and saves images from the page.
+        description: `Fetch-site: Fetches web content and converts to clean markdown using Mozilla Readability + Turndown. Content is automatically cached and organized into titled directories with frontmatter metadata. Optionally processes, optimizes, and saves images from the page.
 
 **Parameters:**
 
-1. **url** (required, string)
+1. **url** (required, string or array)
    - Single URL: "https://example.com"
+   - Multiple URLs: ["https://a.com", "https://b.com"] (max 10, processed in parallel)
 
 2. **name** (optional, string)
    - Custom directory name for content storage
    - Overrides auto-generated name from page title
-   - Use when user specifies a custom name or you have context-specific naming
+   - Only works with single URL
 
 3. **refresh** (optional, boolean)
    - Force re-fetch even if URL is cached
@@ -1184,8 +1390,8 @@ server.setRequestHandler(
 |----------|------|
 | Basic fetch | { "url": "..." } |
 | With images | { "url": "...", "images": true } |
+| Batch | { "url": ["...", "...", "..."] } |
 | Refresh | { "url": "...", "refresh": true } |
-| Custom name | { "url": "...", "name": "my-docs" } |
 
 **Server Configuration:**
 output=${SERVER_CONFIG.imageOutput}, layout=${SERVER_CONFIG.imageLayout}, maxCount=${SERVER_CONFIG.imageMaxCount}, maxLength=${SERVER_CONFIG.textMaxLength}, textRaw=${SERVER_CONFIG.textRaw}`,
@@ -1211,10 +1417,10 @@ server.setRequestHandler(
     _extra: RequestHandlerExtra
   ) => {
     try {
-      const { name, arguments: args } = request.params;
+      const { name: toolName, arguments: args } = request.params;
 
-      if (name !== "fetch") {
-        throw new Error(`Unknown tool: ${name}`);
+      if (toolName !== "fetch") {
+        throw new Error(`Unknown tool: ${toolName}`);
       }
 
       const parsed = FetchArgsSchema.safeParse(args || {});
@@ -1222,7 +1428,21 @@ server.setRequestHandler(
         throw new Error(`Invalid arguments: ${parsed.error}`);
       }
 
-      const { url, name: _customName, refresh: _refresh, images } = parsed.data;
+      const { url: urlInput, name: customName, refresh, images } = parsed.data;
+
+      // Normalize to array for unified processing
+      const urls = Array.isArray(urlInput) ? urlInput : [urlInput];
+      const isBatch = urls.length > 1;
+
+      // Validate: --name only works with single URL
+      if (customName && isBatch) {
+        throw new Error("The 'name' parameter only works with a single URL");
+      }
+
+      // Sanitize custom name to prevent path traversal attacks
+      const sanitizedCustomName = customName
+        ? sanitizeDirname(customName, "")
+        : undefined;
 
       // Build fetch options from server config with per-request overrides
       const fetchOptions = {
@@ -1260,79 +1480,243 @@ server.setRequestHandler(
           SERVER_CONFIG.imageOutput === "both";
       }
 
-      // Check robots.txt unless disabled in server config
-      if (!SERVER_CONFIG.ignoreRobotsTxt) {
-        await checkRobotsTxt(url, DEFAULT_USER_AGENT_AUTONOMOUS);
-      }
+      // Helper function to process a single URL
+      const processSingleUrl = async (
+        url: string,
+        dirName?: string
+      ): Promise<{
+        success: boolean;
+        url: string;
+        title?: string;
+        contentPath?: string;
+        imageCount?: number;
+        error?: string;
+        responseContent?: MCPResponseContent[];
+      }> => {
+        try {
+          // Check cache if enabled and not forcing refresh
+          if (SERVER_CONFIG.cacheEnabled && !refresh) {
+            const cached = getCacheEntry(url);
+            if (cached) {
+              const contentFilePath = path.join(
+                cached.contentPath,
+                "CONTENT.md"
+              );
+              try {
+                const cachedContent = await fs.readFile(
+                  contentFilePath,
+                  "utf-8"
+                );
+                return {
+                  success: true,
+                  url,
+                  title: cached.title,
+                  contentPath: cached.contentPath,
+                  imageCount: cached.imageCount,
+                  responseContent: [
+                    {
+                      type: "text",
+                      text: `Contents of ${url} (cached): ${cached.title}\n\n${cachedContent}\n\n⊙ Served from cache (fetched: ${cached.fetched}). Use refresh:true to re-fetch.`,
+                    },
+                    ...(cached.imageCount > 0
+                      ? [
+                          {
+                            type: "text" as const,
+                            text: `📁 ${cached.imageCount} images available in: ${cached.contentPath}/images/`,
+                          },
+                        ]
+                      : []),
+                  ],
+                };
+              } catch {
+                console.warn(
+                  `Cache entry exists but content file missing for ${url}`
+                );
+              }
+            }
+          }
 
-      const {
-        content,
-        images: processedImages,
-        remainingContent,
-        remainingImages,
-        title,
-      } = await fetchUrl(
-        url,
-        DEFAULT_USER_AGENT_AUTONOMOUS,
-        fetchOptions.raw,
-        fetchOptions
-      );
+          // Check robots.txt unless disabled in server config
+          if (!SERVER_CONFIG.ignoreRobotsTxt) {
+            await checkRobotsTxt(url, DEFAULT_USER_AGENT_AUTONOMOUS);
+          }
 
-      let finalContent = content.slice(
-        fetchOptions.startIndex,
-        fetchOptions.startIndex + fetchOptions.maxLength
-      );
+          const {
+            content,
+            images: processedImages,
+            remainingContent,
+            remainingImages,
+            title,
+          } = await fetchUrl(
+            url,
+            DEFAULT_USER_AGENT_AUTONOMOUS,
+            fetchOptions.raw,
+            fetchOptions
+          );
 
-      // Add pagination info
-      const remainingInfo = [];
-      if (remainingContent > 0) {
-        remainingInfo.push(`${remainingContent} characters of text remaining`);
-      }
-      if (remainingImages > 0) {
-        remainingInfo.push(
-          `${remainingImages} more images available (use server config to change pagination)`
-        );
-      }
+          let finalContent = content.slice(
+            fetchOptions.startIndex,
+            fetchOptions.startIndex + fetchOptions.maxLength
+          );
 
-      if (remainingInfo.length > 0) {
-        finalContent += `\n\n<e>Content truncated. ${remainingInfo.join(", ")}.</e>`;
-      }
+          // Add pagination info
+          const remainingInfo = [];
+          if (remainingContent > 0) {
+            remainingInfo.push(
+              `${remainingContent} characters of text remaining`
+            );
+          }
+          if (remainingImages > 0) {
+            remainingInfo.push(
+              `${remainingImages} more images available (use server config to change pagination)`
+            );
+          }
 
-      // Build MCP response
-      const responseContent: MCPResponseContent[] = [
-        {
-          type: "text",
-          text: `Contents of ${url}${title ? `: ${title}` : ""}:\n${finalContent}`,
-        },
-      ];
+          if (remainingInfo.length > 0) {
+            finalContent += `\n\n<e>Content truncated. ${remainingInfo.join(", ")}.</e>`;
+          }
 
-      // Add images if base64 data exists
-      for (const image of processedImages) {
-        if (image.data) {
-          responseContent.push({
-            type: "image",
-            mimeType: image.mimeType,
-            data: image.data,
+          // Create organized content directory (curator-cli style)
+          const pageTitle = title || "Untitled";
+          const dirname = dirName || sanitizeDirname(pageTitle, url);
+          const contentPath = path.join(
+            SERVER_CONFIG.contentDir,
+            "content",
+            dirname
+          );
+          const contentFilePath = path.join(contentPath, "CONTENT.md");
+          const imagesPath = path.join(contentPath, "images");
+
+          // Ensure directories exist
+          await fs.mkdir(contentPath, { recursive: true });
+          if (processedImages.length > 0) {
+            await fs.mkdir(imagesPath, { recursive: true });
+          }
+
+          // Save markdown with frontmatter
+          const fetchedTimestamp = new Date().toISOString();
+          await writeMarkdownWithFrontmatter(contentFilePath, finalContent, {
+            url,
+            title: pageTitle,
+            fetched: fetchedTimestamp,
           });
+
+          // Update cache
+          if (SERVER_CONFIG.cacheEnabled) {
+            await setCacheEntry(url, {
+              directory: dirname,
+              title: pageTitle,
+              fetched: fetchedTimestamp,
+              contentPath,
+              contentHash: generateContentHash(finalContent),
+              imageCount: processedImages.length,
+              charCount: finalContent.length,
+            });
+          }
+
+          // Build response content
+          const responseContent: MCPResponseContent[] = [
+            {
+              type: "text",
+              text: `Contents of ${url}: ${pageTitle}\n\n${finalContent}`,
+            },
+          ];
+
+          // Add images if base64 data exists
+          for (const image of processedImages) {
+            if (image.data) {
+              responseContent.push({
+                type: "image",
+                mimeType: image.mimeType,
+                data: image.data,
+              });
+            }
+          }
+
+          // Add file save info
+          const savedFiles = processedImages.filter((img) => img.filePath);
+          const fileInfoParts = [`📁 Content saved to: ${contentPath}`];
+
+          if (savedFiles.length > 0) {
+            fileInfoParts.push(
+              ...savedFiles.map(
+                (img, index) => `Image ${index + 1}: ${img.filePath}`
+              )
+            );
+          }
+
+          responseContent.push({
+            type: "text",
+            text: fileInfoParts.join("\n"),
+          });
+
+          return {
+            success: true,
+            url,
+            title: pageTitle,
+            contentPath,
+            imageCount: processedImages.length,
+            responseContent,
+          };
+        } catch (error) {
+          return {
+            success: false,
+            url,
+            error: error instanceof Error ? error.message : String(error),
+          };
         }
-      }
-
-      // Add file save info
-      const savedFiles = processedImages.filter((img) => img.filePath);
-      if (savedFiles.length > 0) {
-        const fileInfoText = savedFiles
-          .map((img, index) => `Image ${index + 1} saved to: ${img.filePath}`)
-          .join("\n");
-
-        responseContent.push({
-          type: "text",
-          text: `\n📁 Saved Images:\n${fileInfoText}`,
-        });
-      }
-
-      return {
-        content: responseContent,
       };
+
+      // Process single URL or batch
+      if (!isBatch) {
+        const result = await processSingleUrl(urls[0], sanitizedCustomName);
+        if (result.responseContent) {
+          return { content: result.responseContent };
+        }
+        throw new Error(result.error || "Unknown error");
+      } else {
+        // Batch processing: fetch all URLs in parallel
+        const results = await Promise.all(
+          urls.map((url) => processSingleUrl(url))
+        );
+
+        // Build summary response
+        const successful = results.filter((r) => r.success);
+        const failed = results.filter((r) => !r.success);
+
+        let summaryText = `## Batch Fetch Complete\n\n`;
+        summaryText += `**Processed:** ${urls.length} URLs\n`;
+        summaryText += `**Successful:** ${successful.length}\n`;
+        if (failed.length > 0) {
+          summaryText += `**Failed:** ${failed.length}\n`;
+        }
+        summaryText += `\n### Results:\n`;
+
+        results.forEach((r, i) => {
+          if (r.success) {
+            const cached =
+              r.responseContent?.[0]?.type === "text" &&
+              (r.responseContent[0] as { text: string }).text.includes(
+                "(cached)"
+              );
+            summaryText += `${i + 1}. ✓ ${r.title || "Untitled"} → ${r.contentPath}${cached ? " (cached)" : ""}\n`;
+          } else {
+            summaryText += `${i + 1}. ✗ ${r.url}: ${r.error}\n`;
+          }
+        });
+
+        const totalImages = successful.reduce(
+          (sum, r) => sum + (r.imageCount || 0),
+          0
+        );
+        if (totalImages > 0) {
+          summaryText += `\n**Total images processed:** ${totalImages}`;
+        }
+
+        return {
+          content: [{ type: "text", text: summaryText }],
+        };
+      }
     } catch (error) {
       return {
         content: [
@@ -1395,6 +1779,13 @@ server.setRequestHandler(
 
 // Start server
 async function runServer() {
+  // Load cache manifest
+  const manifestPath = path.join(SERVER_CONFIG.contentDir, "manifest.json");
+  await loadCacheManifest(manifestPath);
+  console.error(
+    `Loaded cache manifest with ${Object.keys(cacheManifest.entries).length} entries`
+  );
+
   // サーバー起動時に既存のファイルをリソースとして登録
   await scanAndRegisterExistingFiles();
 
