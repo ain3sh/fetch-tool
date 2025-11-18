@@ -238,15 +238,15 @@ async function writeMarkdownWithFrontmatter(
 // Security hardening
 // --------------------
 // Defaults (can be overridden by env vars)
-const FETCH_TIMEOUT_MS = Number(process.env.DEEP_FETCH_TIMEOUT_MS || 12000);
-const MAX_REDIRECTS = Number(process.env.DEEP_FETCH_MAX_REDIRECTS || 3);
+const FETCH_TIMEOUT_MS = Number(process.env.FETCH_SITE_TIMEOUT_MS || 12000);
+const MAX_REDIRECTS = Number(process.env.FETCH_SITE_MAX_REDIRECTS || 3);
 const MAX_HTML_BYTES = Number(
-  process.env.DEEP_FETCH_MAX_HTML_BYTES || 2_000_000
+  process.env.FETCH_SITE_MAX_HTML_BYTES || 2_000_000
 ); // 2MB
 const MAX_IMAGE_BYTES = Number(
-  process.env.DEEP_FETCH_MAX_IMAGE_BYTES || 10_000_000
+  process.env.FETCH_SITE_MAX_IMAGE_BYTES || 10_000_000
 ); // 10MB
-const DISABLE_SSRF_GUARD = process.env.DEEP_FETCH_DISABLE_SSRF_GUARD === "1";
+const DISABLE_SSRF_GUARD = process.env.FETCH_SITE_DISABLE_SSRF_GUARD === "1";
 
 // --------------------
 // Server-level configuration
@@ -384,7 +384,7 @@ function loadServerConfig(args: string[]): ServerConfig {
   // Env var overrides (only low-level security/network settings)
   // Image/text processing settings use CLI args only
   const envConfig: Partial<ServerConfig> = {
-    imageSaveDir: process.env.DEEP_FETCH_DEFAULT_SAVE_DIR || undefined,
+    imageSaveDir: process.env.FETCH_SITE_DEFAULT_SAVE_DIR || undefined,
   };
 
   // CLI arg overrides

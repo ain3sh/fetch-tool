@@ -1,8 +1,8 @@
 {
-  "name": "@ain3sh/deep-fetch",
+  "name": "@ain3sh/fetch-site",
   "version": "2.0.0",
   "type": "module",
-  "description": "Deep-fetch: MCP server for web content fetching with clean markdown extraction, image processing, and organized file management. Configured once at server-level for LLM-friendly simplicity.",
+  "description": "Fetch-site: MCP server for web content fetching with clean markdown extraction, image processing, and organized file management. Configured once at server-level for LLM-friendly simplicity.",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
@@ -52,7 +52,7 @@
   },
   "keywords": [
     "mcp",
-    "deep-fetch",
+    "fetch-site",
     "fetch",
     "web",
     "content",
@@ -70,6 +70,6 @@
   },
   "homepage": "https://github.com/ain3sh/fetch-tool#readme",
   "bin": {
-    "deep-fetch": "dist/index.js"
+    "fetch-site": "dist/index.js"
   }
 }

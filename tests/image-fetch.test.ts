@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 // Disable server startup and SSRF guard for local test servers
 process.env.MCP_FETCH_DISABLE_SERVER = "1";
-process.env.DEEP_FETCH_DISABLE_SSRF_GUARD = "1";
+process.env.FETCH_SITE_DISABLE_SSRF_GUARD = "1";
 // Import after setting env so guards read the right values
 // @ts-expect-error importing compiled file without types
 const { fetchUrl } = await import("../dist/index.js");
