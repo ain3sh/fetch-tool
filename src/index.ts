@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
+import crypto from "node:crypto";
 import dns from "node:dns";
 import { promises as fs } from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { URL } from "node:url";
@@ -53,6 +55,183 @@ let serverInstance: Server;
 let serverConnected = false;
 
 // --------------------
+// Cache System (from curator-cli)
+// --------------------
+interface CacheEntry {
+  directory: string;      // Sanitized directory name
+  title: string;          // Page title
+  fetched: string;        // ISO timestamp
+  contentPath: string;    // Absolute path to content directory
+  contentHash: string;    // SHA256 hash of markdown (first 8 chars)
+  imageCount: number;     // Number of images processed
+  charCount: number;      // Character count of content
+}
+
+interface CacheManifest {
+  version: string;
+  entries: Record<string, CacheEntry>;
+}
+
+// Global cache manifest
+let cacheManifest: CacheManifest = { version: "3.0", entries: {} };
+let cacheManifestPath: string = "";
+
+/**
+ * Sanitize title/URL into a valid directory name (from curator-cli)
+ */
+function sanitizeDirname(title: string, url: string): string {
+  // Try to use title first, fallback to URL
+  let dirname = title || extractDirnameFromUrl(url);
+
+  // Convert to lowercase and replace spaces with hyphens
+  dirname = dirname
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-")           // Spaces to hyphens
+    .replace(/[^a-z0-9-]/g, "")     // Remove special chars
+    .replace(/-+/g, "-")            // Multiple hyphens to single
+    .replace(/^-|-$/g, "");         // Remove leading/trailing hyphens
+
+  // Ensure reasonable length
+  if (dirname.length > 100) {
+    dirname = dirname.substring(0, 100);
+  }
+
+  // Fallback if empty
+  if (!dirname) {
+    dirname = `untitled-${Date.now()}`;
+  }
+
+  return dirname;
+}
+
+/**
+ * Extract directory name from URL path
+ */
+function extractDirnameFromUrl(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    const pathname = urlObj.pathname.replace(/^\/|\/$/g, "");
+
+    if (pathname) {
+      const parts = pathname.split("/");
+      const lastPart = parts[parts.length - 1].replace(/\.[^.]+$/, ""); // Remove extension
+      return lastPart || urlObj.hostname;
+    }
+
+    return urlObj.hostname;
+  } catch {
+    return "untitled";
+  }
+}
+
+/**
+ * Generate content hash (first 8 chars of SHA256)
+ */
+function generateContentHash(content: string): string {
+  return crypto.createHash("sha256").update(content).digest("hex").substring(0, 8);
+}
+
+/**
+ * Load cache manifest from disk
+ */
+async function loadCacheManifest(manifestPath: string): Promise<void> {
+  cacheManifestPath = manifestPath;
+  try {
+    const data = await fs.readFile(manifestPath, "utf-8");
+    cacheManifest = JSON.parse(data);
+  } catch (error) {
+    if (isNodeErrorWithCode(error) && error.code === "ENOENT") {
+      // No manifest yet, start fresh
+      cacheManifest = { version: "3.0", entries: {} };
+    } else {
+      console.warn("Failed to load cache manifest:", error);
+      cacheManifest = { version: "3.0", entries: {} };
+    }
+  }
+}
+
+/**
+ * Save cache manifest to disk
+ */
+async function saveCacheManifest(): Promise<void> {
+  if (!cacheManifestPath) return;
+  try {
+    const dir = path.dirname(cacheManifestPath);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(cacheManifestPath, JSON.stringify(cacheManifest, null, 2));
+  } catch (error) {
+    console.warn("Failed to save cache manifest:", error);
+  }
+}
+
+/**
+ * Check if URL is in cache
+ */
+function getCacheEntry(url: string): CacheEntry | undefined {
+  return cacheManifest.entries[url];
+}
+
+/**
+ * Add/update cache entry
+ */
+async function setCacheEntry(url: string, entry: CacheEntry): Promise<void> {
+  cacheManifest.entries[url] = entry;
+  await saveCacheManifest();
+}
+
+/**
+ * Generate YAML frontmatter for markdown (from curator-cli)
+ */
+function generateFrontmatter(metadata: {
+  url: string;
+  title: string;
+  description?: string;
+  fetched: string;
+  cached?: boolean;
+}): string {
+  const lines = [
+    "---",
+    `url: ${metadata.url}`,
+    `title: ${metadata.title}`,
+  ];
+
+  if (metadata.description) {
+    lines.push(`description: ${metadata.description}`);
+  }
+
+  lines.push(`fetched: ${metadata.fetched}`);
+
+  if (metadata.cached) {
+    lines.push(`cached: true`);
+  }
+
+  lines.push("---", "");
+
+  return lines.join("\n");
+}
+
+/**
+ * Write markdown file with frontmatter
+ */
+async function writeMarkdownWithFrontmatter(
+  outputPath: string,
+  content: string,
+  metadata: {
+    url: string;
+    title: string;
+    description?: string;
+    fetched: string;
+  }
+): Promise<void> {
+  const dir = path.dirname(outputPath);
+  await fs.mkdir(dir, { recursive: true });
+
+  const frontmatter = generateFrontmatter(metadata);
+  await fs.writeFile(outputPath, frontmatter + content, "utf-8");
+}
+
+// --------------------
 // Security hardening
 // --------------------
 // Defaults (can be overridden by env vars)
@@ -85,6 +264,9 @@ interface ServerConfig {
   textMaxLength: number; // Server default, can be overridden per-request
   // Security
   ignoreRobotsTxt: boolean;
+  // Content organization (from curator-cli)
+  contentDir: string;    // Root directory for organized content
+  cacheEnabled: boolean; // Enable URL caching
 }
 
 /**
@@ -150,6 +332,16 @@ function parseCliArgs(args: string[]): Partial<ServerConfig> {
         if (next) config.imageSaveDir = next;
         i++;
         break;
+      case "--content-dir":
+        if (next) config.contentDir = next;
+        i++;
+        break;
+      case "--cache-enabled":
+        config.cacheEnabled = true;
+        break;
+      case "--no-cache":
+        config.cacheEnabled = false;
+        break;
     }
   }
   return config;
@@ -160,8 +352,9 @@ function parseCliArgs(args: string[]): Partial<ServerConfig> {
  */
 function loadServerConfig(args: string[]): ServerConfig {
   // Hard-coded defaults
-  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
+  const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
   const defaultSaveDir = path.join(homeDir, "Downloads", "deep-fetch");
+  const defaultContentDir = path.join(homeDir, "deep-fetch");
 
   const defaults: ServerConfig = {
     imageMaxWidth: 1000,
@@ -176,6 +369,8 @@ function loadServerConfig(args: string[]): ServerConfig {
     textStartIndex: 0,
     textMaxLength: 20000,
     ignoreRobotsTxt: false,
+    contentDir: defaultContentDir,
+    cacheEnabled: true,
   };
 
   // Env var overrides (only low-level security/network settings)
@@ -596,6 +791,14 @@ const FetchArgsSchema = z.object({
       },
       { message: "Only http/https URLs are allowed" }
     ),
+  name: z
+    .string()
+    .optional()
+    .describe("Custom directory name for content (overrides auto-generated name from title)"),
+  refresh: z
+    .boolean()
+    .optional()
+    .describe("Force re-fetch even if URL is cached"),
   images: z
     .union([
       z.boolean(),
@@ -1141,6 +1344,8 @@ console.error("Server started with configuration:", {
   imageMaxCount: SERVER_CONFIG.imageMaxCount,
   textMaxLength: SERVER_CONFIG.textMaxLength,
   ignoreRobotsTxt: SERVER_CONFIG.ignoreRobotsTxt,
+  contentDir: SERVER_CONFIG.contentDir,
+  cacheEnabled: SERVER_CONFIG.cacheEnabled,
 });
 
 interface RequestHandlerExtra {
@@ -1153,20 +1358,29 @@ server.setRequestHandler(
     const tools = [
       {
         name: "fetch",
-        description: `Deep-fetch: Fetches web content and converts to clean markdown using Mozilla Readability + Turndown. Optionally processes, optimizes, and saves images from the page.
+        description: `Deep-fetch: Fetches web content and converts to clean markdown using Mozilla Readability + Turndown. Content is automatically cached and organized into titled directories with frontmatter metadata. Optionally processes, optimizes, and saves images from the page.
 
 **IMPORTANT PARAMETER USAGE GUIDELINES:**
 
 Most configuration is set at the server level by the user. You should ONLY modify these parameters when:
 - The user EXPLICITLY asks you to change them
-- You have a specific contextual reason (for saveDir only)
+- You have a specific contextual reason (for saveDir/name only)
 
 **Parameters:**
 
 1. **url** (required, string)
    - The URL to fetch
 
-2. **images** (optional, boolean or object)
+2. **name** (optional, string)
+   - Custom directory name for content storage
+   - Overrides auto-generated name from page title
+   ✓ Use when user specifies a custom name or you have context-specific naming
+
+3. **refresh** (optional, boolean)
+   - Force re-fetch even if URL is already cached
+   ✓ Use when user asks for "latest", "updated", or "fresh" content
+
+4. **images** (optional, boolean or object)
    - Set to true to enable image fetching
    - Or provide an object with:
      - **maxCount** (number, 0-10): Maximum images to fetch
@@ -1174,31 +1388,36 @@ Most configuration is set at the server level by the user. You should ONLY modif
        Server default: ${SERVER_CONFIG.imageMaxCount}
      - **saveDir** (string): Custom directory to save images
        ✓ You MAY set this based on context (e.g., project-specific folder)
-       ✗ User can override if they specify a location
 
-3. **text** (optional, object)
+5. **text** (optional, object)
    - **raw** (boolean): Return raw HTML instead of markdown
      ✓ Use when user asks for "raw content" or "original HTML"
    - **maxLength** (number): Maximum characters to return
      ⚠️ DO NOT modify unless user explicitly mentions content length
      Server default: ${SERVER_CONFIG.textMaxLength}
 
+**Content Organization:**
+- Content is saved to: ${SERVER_CONFIG.contentDir}/content/<page-title>/
+- Each URL gets a directory containing: CONTENT.md (with frontmatter) + images/
+- Automatic caching prevents duplicate fetches (use refresh:true to override)
+- Frontmatter includes: url, title, description, fetched timestamp
+
 **Typical Usage:**
 
-Simple fetch:
+Simple fetch (auto-cached):
 { "url": "https://example.com" }
 
 Fetch with images:
 { "url": "https://example.com", "images": true }
 
-Fetch with custom save location:
-{ "url": "https://example.com", "images": { "saveDir": "/path/to/project/docs" } }
+Force refresh cached content:
+{ "url": "https://example.com", "refresh": true }
 
-Fetch raw HTML:
-{ "url": "https://example.com", "text": { "raw": true } }
+Custom directory name:
+{ "url": "https://example.com", "name": "my-custom-name" }
 
 **Server Configuration:**
-This server is configured with: output=${SERVER_CONFIG.imageOutput}, layout=${SERVER_CONFIG.imageLayout}, maxCount=${SERVER_CONFIG.imageMaxCount}, maxLength=${SERVER_CONFIG.textMaxLength}`,
+output=${SERVER_CONFIG.imageOutput}, layout=${SERVER_CONFIG.imageLayout}, maxCount=${SERVER_CONFIG.imageMaxCount}, maxLength=${SERVER_CONFIG.textMaxLength}, cache=${SERVER_CONFIG.cacheEnabled ? "enabled" : "disabled"}`,
         inputSchema: zodToJsonSchema(FetchArgsSchema),
       },
     ];
@@ -1221,10 +1440,10 @@ server.setRequestHandler(
     _extra: RequestHandlerExtra
   ) => {
     try {
-      const { name, arguments: args } = request.params;
+      const { name: toolName, arguments: args } = request.params;
 
-      if (name !== "fetch") {
-        throw new Error(`Unknown tool: ${name}`);
+      if (toolName !== "fetch") {
+        throw new Error(`Unknown tool: ${toolName}`);
       }
 
       const parsed = FetchArgsSchema.safeParse(args || {});
@@ -1232,7 +1451,39 @@ server.setRequestHandler(
         throw new Error(`Invalid arguments: ${parsed.error}`);
       }
 
-      const { url, images, text } = parsed.data;
+      const { url, name: customName, refresh, images, text } = parsed.data;
+
+      // Check cache if enabled and not forcing refresh
+      if (SERVER_CONFIG.cacheEnabled && !refresh) {
+        const cached = getCacheEntry(url);
+        if (cached) {
+          // Return cached content info
+          const contentFilePath = path.join(cached.contentPath, "CONTENT.md");
+          try {
+            const cachedContent = await fs.readFile(contentFilePath, "utf-8");
+
+            const responseContent: MCPResponseContent[] = [
+              {
+                type: "text",
+                text: `Contents of ${url} (cached): ${cached.title}\n\n${cachedContent}\n\n⊙ Served from cache (fetched: ${cached.fetched}). Use refresh:true to re-fetch.`,
+              },
+            ];
+
+            // Include image count info
+            if (cached.imageCount > 0) {
+              responseContent.push({
+                type: "text",
+                text: `📁 ${cached.imageCount} images available in: ${cached.contentPath}/images/`,
+              });
+            }
+
+            return { content: responseContent };
+          } catch {
+            // Cache entry exists but file missing, continue to fetch
+            console.warn(`Cache entry exists but content file missing for ${url}`);
+          }
+        }
+      }
 
       // Build fetch options from server config with per-request overrides
       const fetchOptions = {
@@ -1327,11 +1578,45 @@ server.setRequestHandler(
         finalContent += `\n\n<e>Content truncated. ${remainingInfo.join(", ")}.</e>`;
       }
 
+      // Create organized content directory (curator-cli style)
+      const pageTitle = title || "Untitled";
+      const dirname = customName || sanitizeDirname(pageTitle, url);
+      const contentPath = path.join(SERVER_CONFIG.contentDir, "content", dirname);
+      const contentFilePath = path.join(contentPath, "CONTENT.md");
+      const imagesPath = path.join(contentPath, "images");
+
+      // Ensure directories exist
+      await fs.mkdir(contentPath, { recursive: true });
+      if (processedImages.length > 0) {
+        await fs.mkdir(imagesPath, { recursive: true });
+      }
+
+      // Save markdown with frontmatter
+      const fetchedTimestamp = new Date().toISOString();
+      await writeMarkdownWithFrontmatter(contentFilePath, finalContent, {
+        url,
+        title: pageTitle,
+        fetched: fetchedTimestamp,
+      });
+
+      // Update cache
+      if (SERVER_CONFIG.cacheEnabled) {
+        await setCacheEntry(url, {
+          directory: dirname,
+          title: pageTitle,
+          fetched: fetchedTimestamp,
+          contentPath,
+          contentHash: generateContentHash(finalContent),
+          imageCount: processedImages.length,
+          charCount: finalContent.length,
+        });
+      }
+
       // Build MCP response
       const responseContent: MCPResponseContent[] = [
         {
           type: "text",
-          text: `Contents of ${url}${title ? `: ${title}` : ""}:\n${finalContent}`,
+          text: `Contents of ${url}: ${pageTitle}\n\n${finalContent}`,
         },
       ];
 
@@ -1348,16 +1633,18 @@ server.setRequestHandler(
 
       // Add file save info
       const savedFiles = processedImages.filter((img) => img.filePath);
-      if (savedFiles.length > 0) {
-        const fileInfoText = savedFiles
-          .map((img, index) => `Image ${index + 1} saved to: ${img.filePath}`)
-          .join("\n");
+      const fileInfoParts = [`📁 Content saved to: ${contentPath}`];
 
-        responseContent.push({
-          type: "text",
-          text: `\n📁 Saved Images:\n${fileInfoText}`,
-        });
+      if (savedFiles.length > 0) {
+        fileInfoParts.push(
+          ...savedFiles.map((img, index) => `Image ${index + 1}: ${img.filePath}`)
+        );
       }
+
+      responseContent.push({
+        type: "text",
+        text: fileInfoParts.join("\n"),
+      });
 
       return {
         content: responseContent,
@@ -1424,6 +1711,11 @@ server.setRequestHandler(
 
 // Start server
 async function runServer() {
+  // Load cache manifest
+  const manifestPath = path.join(SERVER_CONFIG.contentDir, "manifest.json");
+  await loadCacheManifest(manifestPath);
+  console.error(`Loaded cache manifest with ${Object.keys(cacheManifest.entries).length} entries`);
+
   // サーバー起動時に既存のファイルをリソースとして登録
   await scanAndRegisterExistingFiles();
 
