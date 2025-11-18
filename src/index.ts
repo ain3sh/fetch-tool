@@ -1484,6 +1484,11 @@ server.setRequestHandler(
         throw new Error("The 'name' parameter only works with a single URL");
       }
 
+      // Sanitize custom name to prevent path traversal attacks
+      const sanitizedCustomName = customName
+        ? sanitizeDirname(customName, "")
+        : undefined;
+
       // Build fetch options from server config with per-request overrides
       const fetchOptions = {
         // From server config
@@ -1728,7 +1733,7 @@ server.setRequestHandler(
 
       // Process single URL or batch
       if (!isBatch) {
-        const result = await processSingleUrl(urls[0], customName);
+        const result = await processSingleUrl(urls[0], sanitizedCustomName);
         if (result.responseContent) {
           return { content: result.responseContent };
         }

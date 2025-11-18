@@ -28,6 +28,19 @@ describe("imageFetch pipeline", () => {
   let pageSrv: http.Server;
   let imgSrv: http.Server;
 
+  // Shared base options to reduce duplication
+  const baseImageOptions = {
+    enableFetchImages: true,
+    imageMaxCount: 1,
+    startIndex: 0,
+    maxLength: 1000,
+    imageStartIndex: 0,
+    imageMaxHeight: 4000,
+    imageMaxWidth: 1000,
+    imageQuality: 80,
+    returnBase64: true,
+  } as const;
+
   beforeAll(async () => {
     IMG_BUF = await sharp({
       create: {
@@ -74,15 +87,7 @@ describe("imageFetch pipeline", () => {
       "test-agent",
       false,
       {
-        enableFetchImages: true,
-        imageMaxCount: 1,
-        startIndex: 0,
-        maxLength: 1000,
-        imageStartIndex: 0,
-        imageMaxHeight: 4000,
-        imageMaxWidth: 1000,
-        imageQuality: 80,
-        returnBase64: true,
+        ...baseImageOptions,
         saveImages: true,
         allowCrossOriginImages: true, // default true but be explicit
       }
@@ -103,15 +108,7 @@ describe("imageFetch pipeline", () => {
       "test-agent",
       false,
       {
-        enableFetchImages: true,
-        imageMaxCount: 1,
-        startIndex: 0,
-        maxLength: 1000,
-        imageStartIndex: 0,
-        imageMaxHeight: 4000,
-        imageMaxWidth: 1000,
-        imageQuality: 80,
-        returnBase64: true,
+        ...baseImageOptions,
         saveImages: false,
         allowCrossOriginImages: false,
       }

@@ -66,7 +66,7 @@ Or add to your MCP configuration:
 
 Content is automatically organized:
 
-```
+```text
 ~/deep-fetch/
 ├── manifest.json                    # Cache manifest
 └── content/
@@ -97,7 +97,7 @@ fetched: 2025-01-18T10:30:00Z
 
 Configure once when starting the server:
 
-**Image Processing**
+#### Image Processing
 - `--image-output <base64|file|both>` - Output mode (default: base64)
 - `--image-quality <1-100>` - JPEG quality (default: 80)
 - `--image-max-width <pixels>` - Max width (default: 1000)
@@ -105,23 +105,23 @@ Configure once when starting the server:
 - `--image-max-count <0-10>` - Images per page (default: 3)
 - `--image-layout <merged|individual|both>` - Layout style (default: merged)
 
-**Text Processing**
+#### Text Processing
 - `--text-max-length <chars>` - Max characters (default: 20000)
 
-**Storage**
+#### Storage
 - `--content-dir <path>` - Content directory (default: ~/deep-fetch)
 - `--default-save-dir <path>` - Image save directory (default: ~/Downloads/deep-fetch)
 
-**Caching**
+#### Caching
 - `--cache-enabled` - Enable caching (default)
 - `--no-cache` - Disable caching
 
-**Security**
+#### Security
 - `--ignore-robots-txt` - Bypass robots.txt checks
 
 ### Example Configurations
 
-**High-Quality Archival**
+#### High-Quality Archival
 ```json
 "args": [
   "-y", "github:ain3sh/fetch-tool",
@@ -131,7 +131,7 @@ Configure once when starting the server:
 ]
 ```
 
-**Documentation Gathering**
+#### Documentation Gathering
 ```json
 "args": [
   "-y", "github:ain3sh/fetch-tool",
@@ -140,7 +140,7 @@ Configure once when starting the server:
 ]
 ```
 
-**Quick Preview**
+#### Quick Preview
 ```json
 "args": [
   "-y", "github:ain3sh/fetch-tool",
@@ -178,7 +178,7 @@ Parameters available to AI agents:
 
 ### Content Extraction
 
-```
+```text
 URL → fetch → JSDOM → Readability → Turndown → Markdown
 ```
 
