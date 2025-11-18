@@ -1,97 +1,23 @@
-# Deep-Fetch MCP Tool
+# Deep Fetch
 
-**Web fetching that handles what built-in tools can't**: images, clean markdown extraction, and organized file management—configured once at the server level, not in every prompt.
+An MCP server for fetching web content with intelligent caching, clean markdown extraction, and image processing. Designed for AI agents that need web content without the limitations of built-in fetch tools.
 
-> Fork of [kazuph/mcp-fetch](https://github.com/kazuph/mcp-fetch) with LLM-friendly configuration improvements.
+## Features
 
-## Why Deep Fetch?
+- **Clean Extraction** - Mozilla Readability strips ads, navigation, and clutter
+- **Image Pipeline** - Fetch, optimize, merge vertically, save as JPEG
+- **Automatic Caching** - URL deduplication prevents redundant fetches
+- **Organized Storage** - Content saved to titled directories with YAML frontmatter
+- **Batch Processing** - Fetch multiple URLs in parallel
+- **LLM-Friendly** - Simple parameters for agents, detailed config at server level
 
-Built-in fetch tools in AI assistants are limited:
-- **No image handling** (Claude Code, Aider)
-- **No file saving** (most tools)
-- **Can't handle JavaScript-rendered sites**
-- **LLMs negotiate settings on every request**
-
-Deep Fetch adds:
-- **Image pipeline**: Fetch, resize, optimize, merge, and save automatically
-- **Clean markdown**: Mozilla Readability + Turndown for article extraction
-- **Organized storage**: Date-based directories for saved content
-- **Server-level config**: Set quality/dimensions once—LLMs just provide URLs
-
-## Installation
-
-### Option 1: Direct from GitHub (Recommended)
-No installation needed - runs directly via `npx`:
+## Quick Start
 
 ```bash
 npx -y github:ain3sh/fetch-tool
 ```
 
-### Option 2: Clone Locally
-For development or customization:
-
-```bash
-git clone https://github.com/ain3sh/fetch-tool.git
-cd fetch-tool
-npm install && npm run build
-```
-
-## Usage
-
-### For CLI Agents (Claude Code, Factory Droid, etc.)
-
-Add to `.mcp.json` in your project root:
-
-```json
-{
-  "mcpServers": {
-    "deep-fetch": {
-      "type": "stdio",
-      "command": "npx",
-      "args": [
-        "-y",
-        "github:ain3sh/fetch-tool",
-        "--image-output", "both",        // Save files AND show in response
-        "--image-quality", "90",          // JPEG quality (1-100)
-        "--image-max-count", "10",        // Max images to fetch
-        "--text-max-length", "50000"      // Max text length
-      ]
-    }
-  }
-}
-```
-
-**Common Configurations:**
-
-```json
-// High-quality image archival
-"args": [
-  "-y", "github:ain3sh/fetch-tool",
-  "--image-output", "file",       // Save only, no base64
-  "--image-quality", "95",
-  "--image-max-width", "2000",
-  "--image-max-height", "3000"
-]
-
-// Quick preview mode
-"args": [
-  "-y", "github:ain3sh/fetch-tool",
-  "--image-output", "base64",     // Display only, no saving
-  "--image-quality", "70",
-  "--image-max-count", "3"
-]
-
-// Documentation fetching
-"args": [
-  "-y", "github:ain3sh/fetch-tool",
-  "--text-max-length", "100000",
-  "--image-max-count", "0"        // Text only
-]
-```
-
-### For Claude Desktop
-
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+Or add to your MCP configuration:
 
 ```json
 {
@@ -104,132 +30,204 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
-Or with custom settings:
+## Usage
+
+### Basic Fetching
 
 ```json
-{
-  "mcpServers": {
-    "fetch": {
-      "command": "npx",
-      "args": [
-        "-y", 
-        "github:ain3sh/fetch-tool",
-        "--image-output", "both",
-        "--image-quality", "85"
-      ]
-    }
-  }
-}
-```
-
-## Features
-
-- **Smart Content Extraction**: Readability algorithm for clean article text
-- **Image Processing**: Resize, optimize, convert to JPEG with configurable quality
-- **File Management**: Saves to `~/Downloads/deep-fetch/YYYY-MM-DD/` (configurable)
-- **Dual Output**: Both file saving and Base64 encoding for display
-- **Security**: SSRF protection, robots.txt compliance, size limits
-- **Cross-Platform**: Works on Linux, macOS, and Windows
-
-## Configuration Reference
-
-### Tool Parameters (LLM-Controlled)
-
-Minimal parameters exposed to LLMs:
-
-```json
-// Simple fetch
 { "url": "https://example.com" }
-
-// With images
-{ "url": "https://example.com", "images": true }
-
-// Custom save location
-{ "url": "https://example.com", "images": { "saveDir": "/path/to/project" } }
-
-// Raw HTML instead of markdown
-{ "url": "https://example.com", "text": { "raw": true } }
 ```
 
-### Server Configuration (CLI Arguments)
+### With Images
 
-Set once when configuring the server:
+```json
+{ "url": "https://example.com", "images": true }
+```
 
-#### Image Processing
-- `--image-output <base64|file|both>` - Output format (default: base64)
+### Multiple URLs (Parallel)
+
+```json
+{ "url": ["https://a.com", "https://b.com", "https://c.com"] }
+```
+
+### Force Refresh Cached Content
+
+```json
+{ "url": "https://example.com", "refresh": true }
+```
+
+### Custom Directory Name
+
+```json
+{ "url": "https://example.com", "name": "my-docs" }
+```
+
+## Output Structure
+
+Content is automatically organized:
+
+```
+~/deep-fetch/
+├── manifest.json                    # Cache manifest
+└── content/
+    └── understanding-react-hooks/   # Auto-named from page title
+        ├── CONTENT.md               # Markdown with frontmatter
+        └── images/
+            ├── 0_hero.jpg
+            └── 1_diagram.jpg
+```
+
+### Markdown Format
+
+```markdown
+---
+url: https://react.dev/learn
+title: Understanding React Hooks
+fetched: 2025-01-18T10:30:00Z
+---
+
+# Understanding React Hooks
+
+[Clean extracted content...]
+```
+
+## Configuration
+
+### Server Arguments
+
+Configure once when starting the server:
+
+**Image Processing**
+- `--image-output <base64|file|both>` - Output mode (default: base64)
 - `--image-quality <1-100>` - JPEG quality (default: 80)
 - `--image-max-width <pixels>` - Max width (default: 1000)
 - `--image-max-height <pixels>` - Max height (default: 4000)
-- `--image-max-count <0-10>` - Max images to fetch (default: 3)
-- `--image-layout <merged|individual|both>` - How to combine images (default: merged)
-- `--image-origin-policy <cross-origin|same-origin>` - Image source policy (default: cross-origin)
+- `--image-max-count <0-10>` - Images per page (default: 3)
+- `--image-layout <merged|individual|both>` - Layout style (default: merged)
 
-#### Text Processing
-- `--text-max-length <chars>` - Maximum text length (default: 20000)
-- `--text-start-index <number>` - Starting index for pagination (default: 0)
+**Text Processing**
+- `--text-max-length <chars>` - Max characters (default: 20000)
 
-#### General
-- `--default-save-dir <path>` - Base directory for saved files (default: ~/Downloads/deep-fetch)
+**Storage**
+- `--content-dir <path>` - Content directory (default: ~/deep-fetch)
+- `--default-save-dir <path>` - Image save directory (default: ~/Downloads/deep-fetch)
+
+**Caching**
+- `--cache-enabled` - Enable caching (default)
+- `--no-cache` - Disable caching
+
+**Security**
 - `--ignore-robots-txt` - Bypass robots.txt checks
+
+### Example Configurations
+
+**High-Quality Archival**
+```json
+"args": [
+  "-y", "github:ain3sh/fetch-tool",
+  "--image-output", "both",
+  "--image-quality", "95",
+  "--image-max-count", "10"
+]
+```
+
+**Documentation Gathering**
+```json
+"args": [
+  "-y", "github:ain3sh/fetch-tool",
+  "--text-max-length", "100000",
+  "--image-max-count", "0"
+]
+```
+
+**Quick Preview**
+```json
+"args": [
+  "-y", "github:ain3sh/fetch-tool",
+  "--image-output", "base64",
+  "--image-quality", "70",
+  "--no-cache"
+]
+```
 
 ### Environment Variables
 
-For infrastructure/security settings:
-
-```json
-"env": {
-  "DEEP_FETCH_DEFAULT_SAVE_DIR": "/tmp/deep-fetch",
-  "DEEP_FETCH_TIMEOUT_MS": "15000",              // Request timeout
-  "DEEP_FETCH_MAX_REDIRECTS": "5",               // Max HTTP redirects
-  "DEEP_FETCH_MAX_HTML_BYTES": "5000000",        // Max HTML size (5MB)
-  "DEEP_FETCH_MAX_IMAGE_BYTES": "10000000"       // Max image size (10MB)
-}
+```bash
+DEEP_FETCH_TIMEOUT_MS=12000        # Request timeout
+DEEP_FETCH_MAX_REDIRECTS=3         # Max redirects
+DEEP_FETCH_MAX_HTML_BYTES=2000000  # Max HTML size (2MB)
+DEEP_FETCH_MAX_IMAGE_BYTES=10000000 # Max image size (10MB)
 ```
 
-## Common Use Cases
+## Tool Parameters
 
-### Research & Documentation
-```json
-"args": ["-y", "github:ain3sh/fetch-tool", "--text-max-length", "100000", "--image-max-count", "20"]
+Parameters available to AI agents:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `url` | string \| string[] | URL(s) to fetch (max 10 for batch) |
+| `name` | string | Custom directory name (single URL only) |
+| `refresh` | boolean | Bypass cache and re-fetch |
+| `images` | boolean \| object | Enable image fetching |
+| `images.maxCount` | number | Override server's image count |
+| `images.saveDir` | string | Custom save directory |
+| `text.raw` | boolean | Return raw HTML instead of markdown |
+| `text.maxLength` | number | Override server's max length |
+
+## How It Works
+
+### Content Extraction
+
+```
+URL → fetch → JSDOM → Readability → Turndown → Markdown
 ```
 
-### Social Media Archival
-```json
-"args": ["-y", "github:ain3sh/fetch-tool", "--image-output", "both", "--image-quality", "95"]
-```
+Uses Mozilla's Readability algorithm (same as Firefox Reader View) to extract article content, then converts to clean markdown.
 
-### Quick Content Preview
-```json
-"args": ["-y", "github:ain3sh/fetch-tool", "--image-output", "base64", "--image-max-count", "3"]
-```
+### Image Pipeline
 
-## What's New in v2.0.0
+1. **Discovery** - Extract images from article content (not ads/nav)
+2. **Validation** - SSRF protection, size limits
+3. **Fetch** - Download with timeout protection
+4. **Optimize** - Convert to JPEG with mozjpeg
+5. **Merge** - Stack vertically into single image
+6. **Output** - Base64 for display + file for archival
 
-- **Simplified Interface**: LLMs only see essential parameters (`url`, `images`, `text`)
-- **Server-Level Config**: Image quality, dimensions, etc. configured once via CLI args
-- **Better Defaults**: Works great out-of-the-box
-- **Direct GitHub Usage**: Run via `npx` without installation
+### Caching
+
+- URL-based manifest tracks fetched content
+- Content hash detects changes
+- `refresh: true` bypasses cache
+- Cache can be disabled with `--no-cache`
+
+## Security
+
+- **SSRF Protection** - Blocks private IPs and localhost
+- **robots.txt** - Respects by default
+- **Size Limits** - 2MB HTML, 10MB images
+- **Timeouts** - 12 second default
+- **Redirect Validation** - Manual following, max 3
 
 ## Development
 
-### Building from Source
 ```bash
 git clone https://github.com/ain3sh/fetch-tool.git
 cd fetch-tool
 npm install
 npm run build
-npm start -- --image-quality 90  # Test with arguments
+npm test
 ```
 
-### Security Features
-- SSRF protection (blocks private IPs)
-- Respects robots.txt by default
-- Request timeouts and size limits
-- Manual redirect validation
+### Dependencies
 
-## Attribution
+- `@mozilla/readability` - Article extraction
+- `turndown` - HTML to Markdown
+- `sharp` - Image processing
+- `jsdom` - DOM parsing
+- `node-fetch` - HTTP client
+
+## License
+
+MIT
 
 Fork of [mcp-fetch](https://github.com/kazuph/mcp-fetch) by [kazuph](https://github.com/kazuph).
-
-**License**: MIT  
-**Fork maintained by**: [ain3sh](https://github.com/ain3sh)
