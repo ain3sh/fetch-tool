@@ -58,13 +58,13 @@ let serverConnected = false;
 // Cache System (from curator-cli)
 // --------------------
 interface CacheEntry {
-  directory: string;      // Sanitized directory name
-  title: string;          // Page title
-  fetched: string;        // ISO timestamp
-  contentPath: string;    // Absolute path to content directory
-  contentHash: string;    // SHA256 hash of markdown (first 8 chars)
-  imageCount: number;     // Number of images processed
-  charCount: number;      // Character count of content
+  directory: string; // Sanitized directory name
+  title: string; // Page title
+  fetched: string; // ISO timestamp
+  contentPath: string; // Absolute path to content directory
+  contentHash: string; // SHA256 hash of markdown (first 8 chars)
+  imageCount: number; // Number of images processed
+  charCount: number; // Character count of content
 }
 
 interface CacheManifest {
@@ -87,10 +87,10 @@ function sanitizeDirname(title: string, url: string): string {
   dirname = dirname
     .toLowerCase()
     .trim()
-    .replace(/\s+/g, "-")           // Spaces to hyphens
-    .replace(/[^a-z0-9-]/g, "")     // Remove special chars
-    .replace(/-+/g, "-")            // Multiple hyphens to single
-    .replace(/^-|-$/g, "");         // Remove leading/trailing hyphens
+    .replace(/\s+/g, "-") // Spaces to hyphens
+    .replace(/[^a-z0-9-]/g, "") // Remove special chars
+    .replace(/-+/g, "-") // Multiple hyphens to single
+    .replace(/^-|-$/g, ""); // Remove leading/trailing hyphens
 
   // Ensure reasonable length
   if (dirname.length > 100) {
@@ -129,7 +129,11 @@ function extractDirnameFromUrl(url: string): string {
  * Generate content hash (first 8 chars of SHA256)
  */
 function generateContentHash(content: string): string {
-  return crypto.createHash("sha256").update(content).digest("hex").substring(0, 8);
+  return crypto
+    .createHash("sha256")
+    .update(content)
+    .digest("hex")
+    .substring(0, 8);
 }
 
 /**
@@ -159,7 +163,10 @@ async function saveCacheManifest(): Promise<void> {
   try {
     const dir = path.dirname(cacheManifestPath);
     await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(cacheManifestPath, JSON.stringify(cacheManifest, null, 2));
+    await fs.writeFile(
+      cacheManifestPath,
+      JSON.stringify(cacheManifest, null, 2)
+    );
   } catch (error) {
     console.warn("Failed to save cache manifest:", error);
   }
@@ -190,11 +197,7 @@ function generateFrontmatter(metadata: {
   fetched: string;
   cached?: boolean;
 }): string {
-  const lines = [
-    "---",
-    `url: ${metadata.url}`,
-    `title: ${metadata.title}`,
-  ];
+  const lines = ["---", `url: ${metadata.url}`, `title: ${metadata.title}`];
 
   if (metadata.description) {
     lines.push(`description: ${metadata.description}`);
@@ -265,7 +268,7 @@ interface ServerConfig {
   // Security
   ignoreRobotsTxt: boolean;
   // Content organization (from curator-cli)
-  contentDir: string;    // Root directory for organized content
+  contentDir: string; // Root directory for organized content
   cacheEnabled: boolean; // Enable URL caching
 }
 
@@ -776,50 +779,53 @@ function extractFilenameFromUrl(url: string): string {
 }
 
 // Simplified schema - only LLM-controllable parameters
-const FetchArgsSchema = z.object({
-  url: z
-    .union([
-      z.string().url(),
-      z.array(z.string().url()).min(1).max(10),
-    ])
-    .refine(
-      (val) => {
-        const urls = Array.isArray(val) ? val : [val];
-        return urls.every((u) => {
-          try {
-            const parsed = new URL(u);
-            return parsed.protocol === "http:" || parsed.protocol === "https:";
-          } catch {
-            return false;
-          }
-        });
-      },
-      { message: "Only http/https URLs are allowed" }
-    ),
-  name: z
-    .string()
-    .optional()
-    .describe("Custom directory name for content (overrides auto-generated name from title). Only works with single URL."),
-  refresh: z
-    .boolean()
-    .optional()
-    .describe("Force re-fetch even if URL is cached"),
-  images: z
-    .union([
-      z.boolean(),
-      z.object({
-        maxCount: z.number().int().min(0).max(10).optional(),
-        saveDir: z.string().optional(),
-      }),
-    ])
-    .optional(),
-  text: z
-    .object({
-      raw: z.boolean().optional(),
-      maxLength: z.number().int().positive().max(1000000).optional(),
-    })
-    .optional(),
-}).strict();
+const FetchArgsSchema = z
+  .object({
+    url: z
+      .union([z.string().url(), z.array(z.string().url()).min(1).max(10)])
+      .refine(
+        (val) => {
+          const urls = Array.isArray(val) ? val : [val];
+          return urls.every((u) => {
+            try {
+              const parsed = new URL(u);
+              return (
+                parsed.protocol === "http:" || parsed.protocol === "https:"
+              );
+            } catch {
+              return false;
+            }
+          });
+        },
+        { message: "Only http/https URLs are allowed" }
+      ),
+    name: z
+      .string()
+      .optional()
+      .describe(
+        "Custom directory name for content (overrides auto-generated name from title). Only works with single URL."
+      ),
+    refresh: z
+      .boolean()
+      .optional()
+      .describe("Force re-fetch even if URL is cached"),
+    images: z
+      .union([
+        z.boolean(),
+        z.object({
+          maxCount: z.number().int().min(0).max(10).optional(),
+          saveDir: z.string().optional(),
+        }),
+      ])
+      .optional(),
+    text: z
+      .object({
+        raw: z.boolean().optional(),
+        maxLength: z.number().int().positive().max(1000000).optional(),
+      })
+      .optional(),
+  })
+  .strict();
 
 // ListToolsRequestSchema and CallToolRequestSchema are imported from SDK
 
@@ -1461,7 +1467,13 @@ server.setRequestHandler(
         throw new Error(`Invalid arguments: ${parsed.error}`);
       }
 
-      const { url: urlInput, name: customName, refresh, images, text } = parsed.data;
+      const {
+        url: urlInput,
+        name: customName,
+        refresh,
+        images,
+        text,
+      } = parsed.data;
 
       // Normalize to array for unified processing
       const urls = Array.isArray(urlInput) ? urlInput : [urlInput];
@@ -1528,7 +1540,10 @@ server.setRequestHandler(
       }
 
       // Helper function to process a single URL
-      const processSingleUrl = async (url: string, dirName?: string): Promise<{
+      const processSingleUrl = async (
+        url: string,
+        dirName?: string
+      ): Promise<{
         success: boolean;
         url: string;
         title?: string;
@@ -1542,9 +1557,15 @@ server.setRequestHandler(
           if (SERVER_CONFIG.cacheEnabled && !refresh) {
             const cached = getCacheEntry(url);
             if (cached) {
-              const contentFilePath = path.join(cached.contentPath, "CONTENT.md");
+              const contentFilePath = path.join(
+                cached.contentPath,
+                "CONTENT.md"
+              );
               try {
-                const cachedContent = await fs.readFile(contentFilePath, "utf-8");
+                const cachedContent = await fs.readFile(
+                  contentFilePath,
+                  "utf-8"
+                );
                 return {
                   success: true,
                   url,
@@ -1556,14 +1577,20 @@ server.setRequestHandler(
                       type: "text",
                       text: `Contents of ${url} (cached): ${cached.title}\n\n${cachedContent}\n\n⊙ Served from cache (fetched: ${cached.fetched}). Use refresh:true to re-fetch.`,
                     },
-                    ...(cached.imageCount > 0 ? [{
-                      type: "text" as const,
-                      text: `📁 ${cached.imageCount} images available in: ${cached.contentPath}/images/`,
-                    }] : []),
+                    ...(cached.imageCount > 0
+                      ? [
+                          {
+                            type: "text" as const,
+                            text: `📁 ${cached.imageCount} images available in: ${cached.contentPath}/images/`,
+                          },
+                        ]
+                      : []),
                   ],
                 };
               } catch {
-                console.warn(`Cache entry exists but content file missing for ${url}`);
+                console.warn(
+                  `Cache entry exists but content file missing for ${url}`
+                );
               }
             }
           }
@@ -1594,7 +1621,9 @@ server.setRequestHandler(
           // Add pagination info
           const remainingInfo = [];
           if (remainingContent > 0) {
-            remainingInfo.push(`${remainingContent} characters of text remaining`);
+            remainingInfo.push(
+              `${remainingContent} characters of text remaining`
+            );
           }
           if (remainingImages > 0) {
             remainingInfo.push(
@@ -1609,7 +1638,11 @@ server.setRequestHandler(
           // Create organized content directory (curator-cli style)
           const pageTitle = title || "Untitled";
           const dirname = dirName || sanitizeDirname(pageTitle, url);
-          const contentPath = path.join(SERVER_CONFIG.contentDir, "content", dirname);
+          const contentPath = path.join(
+            SERVER_CONFIG.contentDir,
+            "content",
+            dirname
+          );
           const contentFilePath = path.join(contentPath, "CONTENT.md");
           const imagesPath = path.join(contentPath, "images");
 
@@ -1665,7 +1698,9 @@ server.setRequestHandler(
 
           if (savedFiles.length > 0) {
             fileInfoParts.push(
-              ...savedFiles.map((img, index) => `Image ${index + 1}: ${img.filePath}`)
+              ...savedFiles.map(
+                (img, index) => `Image ${index + 1}: ${img.filePath}`
+              )
             );
           }
 
@@ -1718,15 +1753,21 @@ server.setRequestHandler(
 
         results.forEach((r, i) => {
           if (r.success) {
-            const cached = r.responseContent?.[0]?.type === "text" &&
-              (r.responseContent[0] as { text: string }).text.includes("(cached)");
+            const cached =
+              r.responseContent?.[0]?.type === "text" &&
+              (r.responseContent[0] as { text: string }).text.includes(
+                "(cached)"
+              );
             summaryText += `${i + 1}. ✓ ${r.title || "Untitled"} → ${r.contentPath}${cached ? " (cached)" : ""}\n`;
           } else {
             summaryText += `${i + 1}. ✗ ${r.url}: ${r.error}\n`;
           }
         });
 
-        const totalImages = successful.reduce((sum, r) => sum + (r.imageCount || 0), 0);
+        const totalImages = successful.reduce(
+          (sum, r) => sum + (r.imageCount || 0),
+          0
+        );
         if (totalImages > 0) {
           summaryText += `\n**Total images processed:** ${totalImages}`;
         }
@@ -1800,7 +1841,9 @@ async function runServer() {
   // Load cache manifest
   const manifestPath = path.join(SERVER_CONFIG.contentDir, "manifest.json");
   await loadCacheManifest(manifestPath);
-  console.error(`Loaded cache manifest with ${Object.keys(cacheManifest.entries).length} entries`);
+  console.error(
+    `Loaded cache manifest with ${Object.keys(cacheManifest.entries).length} entries`
+  );
 
   // サーバー起動時に既存のファイルをリソースとして登録
   await scanAndRegisterExistingFiles();
@@ -1816,6 +1859,5 @@ if (process.env.MCP_FETCH_DISABLE_SERVER !== "1") {
     process.exit(1);
   });
 }
-
 
 export { fetchUrl };
