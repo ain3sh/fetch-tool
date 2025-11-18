@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 // Disable server startup and SSRF guard for local test servers
 process.env.MCP_FETCH_DISABLE_SERVER = "1";
-process.env.MCP_FETCH_DISABLE_SSRF_GUARD = "1";
+process.env.FETCH_SITE_DISABLE_SSRF_GUARD = "1";
 // Import after setting env so guards read the right values
 // @ts-expect-error importing compiled file without types
 const { fetchUrl } = await import("../dist/index.js");
@@ -27,6 +27,19 @@ describe("imageFetch pipeline", () => {
   const PORT_IMG = 19082;
   let pageSrv: http.Server;
   let imgSrv: http.Server;
+
+  // Shared base options to reduce duplication
+  const baseImageOptions = {
+    enableFetchImages: true,
+    imageMaxCount: 1,
+    startIndex: 0,
+    maxLength: 1000,
+    imageStartIndex: 0,
+    imageMaxHeight: 4000,
+    imageMaxWidth: 1000,
+    imageQuality: 80,
+    returnBase64: true,
+  } as const;
 
   beforeAll(async () => {
     IMG_BUF = await sharp({
@@ -74,15 +87,7 @@ describe("imageFetch pipeline", () => {
       "test-agent",
       false,
       {
-        enableFetchImages: true,
-        imageMaxCount: 1,
-        startIndex: 0,
-        maxLength: 1000,
-        imageStartIndex: 0,
-        imageMaxHeight: 4000,
-        imageMaxWidth: 1000,
-        imageQuality: 80,
-        returnBase64: true,
+        ...baseImageOptions,
         saveImages: true,
         allowCrossOriginImages: true, // default true but be explicit
       }
@@ -103,15 +108,7 @@ describe("imageFetch pipeline", () => {
       "test-agent",
       false,
       {
-        enableFetchImages: true,
-        imageMaxCount: 1,
-        startIndex: 0,
-        maxLength: 1000,
-        imageStartIndex: 0,
-        imageMaxHeight: 4000,
-        imageMaxWidth: 1000,
-        imageQuality: 80,
-        returnBase64: true,
+        ...baseImageOptions,
         saveImages: false,
         allowCrossOriginImages: false,
       }
